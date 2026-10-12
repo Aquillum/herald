@@ -189,14 +189,17 @@ class WatchRelay(
     fun status(node: String) {
         scope.launch {
             val (status, gateway) = currentStatus()
+            // Due or not is decided with what's sent: decided after, another ask's check could land during the
+            // send and leave this stale answer last on the watch.
+            val due = gateway != null && !liveVoiceFresh(gateway)
             // Told at once with what's known: a gateway that's slow or out of reach (off the tailnet) would hold
             // the answer up to the request's timeout. A fresh check, when due, follows if it changed anything.
             outbox.sendSafely(node, WearPaths.STATUS, WearJson.encode(status))
-            if (gateway != null && !liveVoiceFresh(gateway)) {
+            if (due && gateway != null) {
                 val known = status.liveVoice
                 val on = checkLiveVoice(gateway, known)
-                // Told as the phone stands now, not as before the check: signed out or switched meanwhile, it's
-                // already been told, and this would undo it.
+                // Told as the phone stands now, not as before the check: signed out or switched meanwhile, this
+                // gateway's answer is no longer the watch's, and its next ask tells it how things stand.
                 val (now, nowGateway) = currentStatus()
                 if (on != known && nowGateway == gateway && now.liveVoice == on) {
                     outbox.sendSafely(node, WearPaths.STATUS, WearJson.encode(now))
