@@ -236,9 +236,12 @@ class WatchCalls(
             if (batch.events.isNotEmpty()) heard = true
             order.add(batch.seq, batch)
             if (order.waiting && gap?.isActive != true) {
+                // Again while some still wait: past one gap may be another, and nothing may come to start a new wait.
                 gap = scope.launch {
-                    delay(CALL_GAP_MS)
-                    order.skipGap()
+                    while (order.waiting) {
+                        delay(CALL_GAP_MS)
+                        order.skipGap()
+                    }
                 }
             }
         }

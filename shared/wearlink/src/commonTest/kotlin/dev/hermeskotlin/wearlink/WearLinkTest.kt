@@ -95,6 +95,21 @@ class WearLinkTest {
     }
 
     @Test
+    fun pastOneSkippedGapAnotherStillWaitsToBeSkipped() {
+        val out = mutableListOf<String>()
+        val order = InOrder<String> { out += it }
+        order.add(2, "b")
+        order.add(4, "d")
+        order.skipGap()
+        assertEquals(listOf("b"), out)
+        // The callers skip again while this holds, so "d" doesn't wait on a batch that may never come.
+        assertTrue(order.waiting)
+        order.skipGap()
+        assertEquals(listOf("b", "d"), out)
+        assertFalse(order.waiting)
+    }
+
+    @Test
     fun longRepliesAreCutAtAWordToFitAMessage() {
         assertEquals("short", clipForWatch("short"))
         val clipped = clipForWatch("word ".repeat(100), max = 40)
