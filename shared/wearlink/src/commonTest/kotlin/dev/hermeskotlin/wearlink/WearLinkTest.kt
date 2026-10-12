@@ -72,7 +72,15 @@ class WearLinkTest {
     @Test
     fun anOlderPhoneSaysNothingOfLiveVoice() {
         val status = WearJson.decode<PhoneStatus>("""{"signedIn":true,"connected":true}""".encodeToByteArray())
-        assertEquals(PhoneStatus(signedIn = true, connected = true, failed = false, liveVoice = false), status)
+        assertEquals(PhoneStatus(signedIn = true, connected = true, failed = false, liveVoice = null), status)
+    }
+
+    @Test
+    fun aPhoneThatKnowsItsLiveVoiceSaysSoEitherWay() {
+        for (live in listOf(true, false)) {
+            val status = PhoneStatus(signedIn = true, connected = true, liveVoice = live)
+            assertEquals(live, WearJson.decode<PhoneStatus>(WearJson.encode(status))?.liveVoice)
+        }
     }
 
     @Test

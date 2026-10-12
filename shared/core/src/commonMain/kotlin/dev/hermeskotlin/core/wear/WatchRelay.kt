@@ -188,22 +188,33 @@ class WatchRelay(
 
     fun status(node: String) {
         scope.launch {
-            val saved = gateways.current()
-            val state = connection.state.value
-            val signedIn = saved != null && auth.hasStoredSession(saved.gatewayUrl) && state !is ConnectionState.SessionExpired
-            // Idle counts: Herald connects when asked, it just holds no connection while in the background.
-            val reachable = state is ConnectionState.Connected || state is ConnectionState.Idle
-            val gateway = saved?.gatewayUrl?.takeIf { signedIn }
-            val known = liveVoice?.takeIf { it.first == gateway }?.second
-            val status = PhoneStatus(signedIn, signedIn && reachable, failed = signedIn && state is ConnectionState.Failed, liveVoice = known ?: false)
+            val (status, gateway) = currentStatus()
             // Told at once with what's known: a gateway that's slow or out of reach (off the tailnet) would hold
             // the answer up to the request's timeout. A fresh check, when due, follows if it changed anything.
             outbox.sendSafely(node, WearPaths.STATUS, WearJson.encode(status))
             if (gateway != null && !liveVoiceFresh(gateway)) {
+                val known = status.liveVoice
                 val on = checkLiveVoice(gateway, known)
-                if (on != status.liveVoice) outbox.sendSafely(node, WearPaths.STATUS, WearJson.encode(status.copy(liveVoice = on)))
+                // Told as the phone stands now, not as before the check: signed out or switched meanwhile, it's
+                // already been told, and this would undo it.
+                val (now, nowGateway) = currentStatus()
+                if (on != known && nowGateway == gateway && now.liveVoice == on) {
+                    outbox.sendSafely(node, WearPaths.STATUS, WearJson.encode(now))
+                }
             }
         }
+    }
+
+    /** How the phone stands, and the gateway it's signed in to; its live voice null when not asked yet. */
+    private suspend fun currentStatus(): Pair<PhoneStatus, GatewayUrl?> {
+        val saved = gateways.current()
+        val state = connection.state.value
+        val signedIn = saved != null && auth.hasStoredSession(saved.gatewayUrl) && state !is ConnectionState.SessionExpired
+        // Idle counts: Herald connects when asked, it just holds no connection while in the background.
+        val reachable = state is ConnectionState.Connected || state is ConnectionState.Idle
+        val gateway = saved?.gatewayUrl?.takeIf { signedIn }
+        val live = if (gateway == null) false else liveVoice?.takeIf { it.first == gateway }?.second
+        return PhoneStatus(signedIn, signedIn && reachable, failed = signedIn && state is ConnectionState.Failed, liveVoice = live) to gateway
     }
 
     /** Whether [gateway]'s live voice was asked lately: the watch asks how the phone stands often, the gateway every few minutes. */
@@ -218,7 +229,8 @@ class WatchRelay(
             is ApiResult.Success -> result.value.live
             else -> known ?: false
         }
-        liveVoiceIs(gateway, on)
+        // Not over the gateway switched to meanwhile: the one slot is for the current one.
+        if (gateways.current()?.gatewayUrl == gateway) liveVoiceIs(gateway, on)
         return on
     }
 

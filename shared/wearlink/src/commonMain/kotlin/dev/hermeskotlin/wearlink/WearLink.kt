@@ -213,8 +213,11 @@ data class PhoneStatus(
     val signedIn: Boolean,
     val connected: Boolean,
     val failed: Boolean = false,
-    /** The gateway talks live (GPT-Live): the watch can hold a voice call instead of sending what it heard. */
-    val liveVoice: Boolean = false,
+    /**
+     * The gateway talks live (GPT-Live): the watch can hold a voice call instead of sending what it heard. Null
+     * when the phone hasn't asked the gateway yet (or is older): the watch keeps what it was last told.
+     */
+    val liveVoice: Boolean? = null,
 )
 
 /*
