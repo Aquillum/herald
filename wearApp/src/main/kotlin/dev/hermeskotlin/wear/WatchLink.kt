@@ -6,7 +6,6 @@ import androidx.wear.tiles.TileService
 import com.google.android.gms.wearable.CapabilityClient
 import com.google.android.gms.wearable.Wearable
 import dev.hermeskotlin.wearlink.CALL_EVENT_TYPES
-import dev.hermeskotlin.wearlink.CALL_GAP_MS
 import dev.hermeskotlin.wearlink.InOrder
 import dev.hermeskotlin.wearlink.CallEnd
 import dev.hermeskotlin.wearlink.CallEvents
@@ -347,17 +346,7 @@ class WatchLink(
         if (events.callId != now.id || !now.active) return
         val order = callSends
         order.add(events.seq, events)
-        if (order.waiting && callSendGap?.isActive != true) {
-            // Again while some still wait: past one gap may be another, and the phone may send nothing more for a while.
-            // Each gap gets its full wait: one that opened during the last is skipped only when it's still there.
-            callSendGap = scope.launch(main) {
-                while (order.waiting) {
-                    val missing = order.missing
-                    delay(CALL_GAP_MS)
-                    if (order.missing == missing) order.skipGap()
-                }
-            }
-        }
+        if (order.waiting && callSendGap?.isActive != true) callSendGap = scope.launch(main) { order.skipGaps() }
     }
 
     fun newChat() {

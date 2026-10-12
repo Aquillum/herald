@@ -1,5 +1,8 @@
 package dev.hermeskotlin.wearlink
 
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
@@ -128,6 +131,44 @@ class WearLinkTest {
         order.add(5, "e")
         // A new gap: the callers wait it out in full, rather than skip it on the old one's time.
         assertEquals(4, order.missing)
+    }
+
+    @Test
+    fun aSecondGapIsSkippedWithoutAnotherBatchComing() = runTest {
+        val out = mutableListOf<String>()
+        val order = InOrder<String> { out += it }
+        order.add(3, "c")
+        order.add(5, "e")
+        val skipping = launch { order.skipGaps(gapMs = 100) }
+        advanceTimeBy(101)
+        assertEquals(listOf("c"), out)
+        // Nothing more comes, and 4 is skipped all the same.
+        advanceTimeBy(100)
+        assertEquals(listOf("c", "e"), out)
+        assertFalse(order.waiting)
+        skipping.join()
+    }
+
+    @Test
+    fun aGapThatOpensDuringAWaitGetsItsFullWait() = runTest {
+        val out = mutableListOf<String>()
+        val order = InOrder<String> { out += it }
+        order.add(1, "a")
+        order.add(3, "c")
+        val skipping = launch { order.skipGaps(gapMs = 100) }
+        advanceTimeBy(90)
+        // 2 fills its gap late, opening one at 4.
+        order.add(2, "b")
+        order.add(5, "e")
+        advanceTimeBy(20)
+        assertEquals(listOf("a", "b", "c"), out)
+        assertTrue(order.waiting)
+        // 4 would have been skipped here, 100 after the wait started, had its own wait not begun only now.
+        advanceTimeBy(80)
+        assertEquals(listOf("a", "b", "c"), out)
+        order.add(4, "d")
+        assertEquals(listOf("a", "b", "c", "d", "e"), out)
+        skipping.join()
     }
 
     @Test
