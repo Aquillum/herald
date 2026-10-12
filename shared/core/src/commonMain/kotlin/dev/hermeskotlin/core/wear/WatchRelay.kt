@@ -193,21 +193,30 @@ class WatchRelay(
             val signedIn = saved != null && auth.hasStoredSession(saved.gatewayUrl) && state !is ConnectionState.SessionExpired
             // Idle counts: Herald connects when asked, it just holds no connection while in the background.
             val reachable = state is ConnectionState.Connected || state is ConnectionState.Idle
-            val live = signedIn && saved != null && liveVoiceOn(saved.gatewayUrl)
-            val status = PhoneStatus(signedIn, signedIn && reachable, failed = signedIn && state is ConnectionState.Failed, liveVoice = live)
+            val gateway = saved?.gatewayUrl?.takeIf { signedIn }
+            val known = liveVoice?.takeIf { it.first == gateway }?.second
+            val status = PhoneStatus(signedIn, signedIn && reachable, failed = signedIn && state is ConnectionState.Failed, liveVoice = known ?: false)
+            // Told at once with what's known: a gateway that's slow or out of reach (off the tailnet) would hold
+            // the answer up to the request's timeout. A fresh check, when due, follows if it changed anything.
             outbox.sendSafely(node, WearPaths.STATUS, WearJson.encode(status))
+            if (gateway != null && !liveVoiceFresh(gateway)) {
+                val on = checkLiveVoice(gateway, known)
+                if (on != status.liveVoice) outbox.sendSafely(node, WearPaths.STATUS, WearJson.encode(status.copy(liveVoice = on)))
+            }
         }
     }
 
-    /** Whether the gateway talks live (GPT-Live), asked at most every few minutes: the watch asks how the phone stands often. */
-    private suspend fun liveVoiceOn(gateway: GatewayUrl): Boolean {
-        val known = liveVoice
-        if (known != null && known.first == gateway && Clock.System.now().toEpochMilliseconds() - liveVoiceAt < LIVE_VOICE_CHECK_MS) return known.second
+    /** Whether [gateway]'s live voice was asked lately: the watch asks how the phone stands often, the gateway every few minutes. */
+    private fun liveVoiceFresh(gateway: GatewayUrl): Boolean =
+        liveVoice?.first == gateway && Clock.System.now().toEpochMilliseconds() - liveVoiceAt < LIVE_VOICE_CHECK_MS
+
+    /** Whether the gateway talks live (GPT-Live); [known] is what it said last. */
+    private suspend fun checkLiveVoice(gateway: GatewayUrl, known: Boolean?): Boolean {
         val result = audio.voiceLiveStatus(gateway, profiles.get(gateway))
         // A failed check keeps what was known: an older gateway answers 404, a dropped one nothing.
         val on = when (result) {
             is ApiResult.Success -> result.value.live
-            else -> known?.takeIf { it.first == gateway }?.second ?: false
+            else -> known ?: false
         }
         liveVoiceIs(gateway, on)
         return on
