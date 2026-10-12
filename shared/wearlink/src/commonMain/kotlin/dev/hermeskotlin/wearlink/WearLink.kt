@@ -314,6 +314,9 @@ class InOrder<T>(private val deliver: (T) -> Unit) {
     /** Some came early, and wait for one missing. */
     val waiting: Boolean get() = early.isNotEmpty()
 
+    /** The batch they wait for, null when none wait: the same after [CALL_GAP_MS], it's time to [skipGap]. */
+    val missing: Int? get() = if (early.isEmpty()) null else last + 1
+
     fun add(seq: Int, item: T) {
         if (seq <= last || seq in early) return
         early[seq] = item

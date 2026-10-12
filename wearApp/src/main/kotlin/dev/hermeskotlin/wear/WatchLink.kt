@@ -349,10 +349,12 @@ class WatchLink(
         order.add(events.seq, events)
         if (order.waiting && callSendGap?.isActive != true) {
             // Again while some still wait: past one gap may be another, and the phone may send nothing more for a while.
+            // Each gap gets its full wait: one that opened during the last is skipped only when it's still there.
             callSendGap = scope.launch(main) {
                 while (order.waiting) {
+                    val missing = order.missing
                     delay(CALL_GAP_MS)
-                    order.skipGap()
+                    if (order.missing == missing) order.skipGap()
                 }
             }
         }

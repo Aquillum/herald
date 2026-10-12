@@ -118,6 +118,19 @@ class WearLinkTest {
     }
 
     @Test
+    fun theMissingBatchMovesOnWhenItsGapFillsSoANewGapIsntSkippedEarly() {
+        val order = InOrder<String> {}
+        order.add(1, "a")
+        assertNull(order.missing)
+        order.add(3, "c")
+        assertEquals(2, order.missing)
+        order.add(2, "b")
+        order.add(5, "e")
+        // A new gap: the callers wait it out in full, rather than skip it on the old one's time.
+        assertEquals(4, order.missing)
+    }
+
+    @Test
     fun longRepliesAreCutAtAWordToFitAMessage() {
         assertEquals("short", clipForWatch("short"))
         val clipped = clipForWatch("word ".repeat(100), max = 40)
