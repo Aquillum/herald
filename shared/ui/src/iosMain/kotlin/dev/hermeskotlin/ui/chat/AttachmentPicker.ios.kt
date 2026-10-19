@@ -25,6 +25,13 @@ actual fun rememberAttachmentPicker(
 
 @Composable
 actual fun rememberImageBitmap(bytes: ByteArray, maxEdge: Int): ImageBitmap? =
-    remember(bytes, maxEdge) { decodeUpright(bytes, maxEdge)?.toBitmap() }
+    remember(bytes, maxEdge) { decodeImageBitmap(bytes, maxEdge) }
+
+actual fun decodeImageBitmap(bytes: ByteArray, maxEdge: Int): ImageBitmap? = decodeUpright(bytes, maxEdge)?.toBitmap()
+
+/** Every format iOS decodes reads quickly enough to decode in place, so it's never shown as decoding. */
+@Composable
+actual fun rememberDecodedImage(bytes: ByteArray, maxEdge: Int): DecodedImage =
+    remember(bytes, maxEdge) { DecodedImage(decodeImageBitmap(bytes, maxEdge), decoding = false) }
 
 private const val NOT_YET = "Attachments aren't available on iOS yet."

@@ -14,6 +14,7 @@ import dev.hermeskotlin.core.chat.SessionWatcher
 import dev.hermeskotlin.core.connection.ConnectionState
 import dev.hermeskotlin.core.connection.GatewayConnection
 import dev.hermeskotlin.core.push.PushSetup
+import dev.hermeskotlin.core.wear.WatchRelay
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
@@ -32,6 +33,7 @@ class NotificationActionReceiver : BroadcastReceiver(), KoinComponent {
     private val bots: BotsApi by inject()
     private val push: PushSetup by inject()
     private val watcher: SessionWatcher by inject()
+    private val relay: WatchRelay by inject()
 
     override fun onReceive(context: Context, intent: Intent) {
         val pending = goAsync()
@@ -62,6 +64,7 @@ class NotificationActionReceiver : BroadcastReceiver(), KoinComponent {
                     (request as? InputRequest.Clarify)?.let { InputAnswers.clarify(it, listOf(listOf(text))) }
                 }
             }
+            ACTION_DECLINE_CALL -> intent.getStringExtra(EXTRA_REQUEST_ID)?.let(notifications::decline)
             ACTION_BOT_CLEARED -> intent.getStringExtra(EXTRA_BOT)?.let(notifications::forgetBot)
             ACTION_ROOM_CLEARED -> intent.getStringExtra(ChatNotifications.EXTRA_OPEN_ROOM)?.let(notifications::forgetRoom)
             ACTION_BOT_REPLY -> {
@@ -104,9 +107,11 @@ class NotificationActionReceiver : BroadcastReceiver(), KoinComponent {
         }
     }
 
-    private suspend fun answer(session: ChatSession?, requestId: String, result: (InputRequest) -> kotlinx.serialization.json.JsonObject?) {
+    private suspend fun answer(open: ChatSession?, requestId: String, result: (InputRequest) -> kotlinx.serialization.json.JsonObject?) {
+        // The open chat's, else the watch's chat's (it has its own session).
+        val session = listOfNotNull(open, relay.session.value).firstOrNull { chat -> chat.state.value.inputRequests.any { it.id == requestId } }
         val request = session?.state?.value?.inputRequests?.firstOrNull { it.id == requestId }
-        if (request == null) {
+        if (session == null || request == null) {
             // A chat that isn't open but is watched; else answered elsewhere, or the turn is over.
             val watched = watcher.find(requestId)?.second
             val answer = watched?.let(result)
@@ -146,6 +151,7 @@ class NotificationActionReceiver : BroadcastReceiver(), KoinComponent {
         const val ACTION_BOT_REPLY = "dev.hermeskotlin.action.BOT_REPLY"
         const val ACTION_BOT_CLEARED = "dev.hermeskotlin.action.BOT_CLEARED"
         const val ACTION_ROOM_CLEARED = "dev.hermeskotlin.action.ROOM_CLEARED"
+        const val ACTION_DECLINE_CALL = "dev.hermeskotlin.action.DECLINE_CALL"
         const val EXTRA_BOT = "bot"
 
         const val EXTRA_REQUEST_ID = "request_id"

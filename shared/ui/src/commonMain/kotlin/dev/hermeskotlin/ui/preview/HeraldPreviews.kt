@@ -49,11 +49,26 @@ import dev.hermeskotlin.core.capabilities.McpServer
 import dev.hermeskotlin.core.capabilities.Skill
 import dev.hermeskotlin.core.capabilities.Toolset
 import dev.hermeskotlin.ui.chat.CheckpointsSheetView
+import dev.hermeskotlin.ui.chat.FileDownload
+import dev.hermeskotlin.ui.chat.FileLoad
+import dev.hermeskotlin.ui.chat.FileViewerPage
 import dev.hermeskotlin.ui.chat.ProcessesSheetView
+import dev.hermeskotlin.ui.chat.SessionControlSheetView
 import dev.hermeskotlin.ui.chat.UsageSheetView
 import dev.hermeskotlin.ui.sessions.CapabilitiesActions
 import dev.hermeskotlin.ui.sessions.CapabilitiesView
+import dev.hermeskotlin.ui.sessions.ConfigActions
+import dev.hermeskotlin.ui.sessions.ConfigPlace
+import dev.hermeskotlin.ui.sessions.ConfigView
+import dev.hermeskotlin.core.config.ConfigCatalog
+import dev.hermeskotlin.core.config.ConfigEntry
+import dev.hermeskotlin.ui.sessions.ChoiceSheet
+import kotlinx.serialization.json.JsonElement
 import dev.hermeskotlin.ui.sessions.ScheduledActions
+import dev.hermeskotlin.ui.inbox.FollowView
+import dev.hermeskotlin.ui.inbox.GroupsView
+import dev.hermeskotlin.ui.inbox.InboxView
+import dev.hermeskotlin.ui.inbox.RunView
 import dev.hermeskotlin.ui.sessions.ScheduledView
 import dev.hermeskotlin.ui.sessions.CapabilityTab
 import dev.hermeskotlin.ui.sessions.InsightsView
@@ -99,6 +114,7 @@ import dev.hermeskotlin.ui.chat.ChatView
 import dev.hermeskotlin.ui.chat.ModelPickerState
 import dev.hermeskotlin.ui.chat.ModelSheet
 import dev.hermeskotlin.ui.voice.DictationState
+import dev.hermeskotlin.ui.voice.ReadAloudState
 import dev.hermeskotlin.ui.voice.VoiceChatState
 
 /** The screens the README shows, drawn from [ChatSamples]. */
@@ -114,6 +130,8 @@ enum class PreviewScene(val label: String) {
     Undelivered("Messages that lost their reply"),
     Subagents("Subagents"),
     Voice("Voice chat"),
+    ReadAloud("A reply being read aloud"),
+    ReadAloudFailed("A reply the gateway couldn't voice"),
     NewChat("A new chat"),
     Sidebar("The sessions sidebar"),
     Bots("The bots and rooms"),
@@ -125,23 +143,41 @@ enum class PreviewScene(val label: String) {
     Journey("What the agent has learned"),
     Insights("Insights"),
     Capabilities("Capabilities"),
+    Config("Hermes's settings"),
+    ConfigVoice("Hermes's voice settings, one saving"),
+    ConfigSearch("A search across Hermes's settings"),
+    ConfigPicker("Picking a voice, with Other… for one off the list"),
     Plugins("Plugins with a page"),
     Assistant("The assistant, called up over another app"),
     AssistantAnswer("The assistant, after a question about the screen"),
     Scheduled("Scheduled jobs"),
+    Inbox("The Inbox's folders"),
+    InboxFolder("A folder in the Inbox"),
+    InboxReport("A report read in full"),
+    InboxJobs("The jobs in the Inbox"),
+    InboxGroups("Folders and groups"),
     ScheduledJob("A scheduled job and its runs"),
     JobEditor("A new scheduled job"),
     Usage("Usage and context"),
     Processes("Background processes"),
+    Goal("The chat's goal, loop and heartbeat"),
+    GoalStrip("A chat with a goal, loop and heartbeat above the composer"),
     Comments("Comments on a reply"),
     MidTask("Typing while a task runs"),
     ConnectionCheck("The connection check"),
     LongChat("A chat to scroll back through"),
+    Tables("Tables in an answer"),
     Notices("Notices from the gateway"),
     Archived("Archived, with Undo"),
     Checkpoints("Checkpoints, one opened on its changes"),
+    FileMarkdown("A Markdown file a reply linked to, rendered full screen"),
+    FileCode("A code file opened at the line its link names"),
+    FileTable("A CSV file as a table"),
+    FileMissing("A linked file the gateway no longer has"),
+    FilePdf("A PDF a reply linked to, its pages drawn"),
     ProjectOptions("A project's options"),
     NewProject("A new project"),
+    Threads("Threads above the pinned chats"),
     Models("Your starred and recent models in the model picker"),
     ModelsAll("Every model, one row per model, in the model picker"),
     ModelSearch("A search in the model picker"),
@@ -169,6 +205,7 @@ fun HeraldPreview(scene: PreviewScene, dark: Boolean = true, accent: String = DE
         ) {
             when (scene) {
                 PreviewScene.Reply -> SampleChat(ChatSamples.reply)
+                PreviewScene.Tables -> SampleChat(ChatSamples.tables)
                 PreviewScene.Notices -> SampleChat(ChatSamples.notices)
                 PreviewScene.Working -> SampleChat(ChatSamples.working)
                 PreviewScene.Approval -> SampleChat(ChatSamples.approval)
@@ -180,6 +217,8 @@ fun HeraldPreview(scene: PreviewScene, dark: Boolean = true, accent: String = DE
                 PreviewScene.Undelivered -> SampleChat(ChatSamples.undelivered)
                 PreviewScene.Subagents -> SampleChat(ChatSamples.subagents)
                 PreviewScene.Voice -> SampleChat(ChatSamples.voice, voiceChat = ChatSamples.listening)
+                PreviewScene.ReadAloud -> SampleChat(ChatSamples.reply, readAloud = ReadAloudState(key = "a1"))
+                PreviewScene.ReadAloudFailed -> SampleChat(ChatSamples.reply, readAloud = ReadAloudState(error = "Speech synthesis failed"))
                 PreviewScene.NewChat -> SampleChat(ChatSamples.empty, placeholder = "What are we building?")
                 PreviewScene.Sidebar -> OpenSidebar {
                     SessionsSidebarSample(
@@ -189,6 +228,17 @@ fun HeraldPreview(scene: PreviewScene, dark: Boolean = true, accent: String = DE
                         statuses = ChatSamples.sessionStatuses,
                         drafts = ChatSamples.sessionDrafts,
                         projects = ChatSamples.projects,
+                    )
+                }
+                PreviewScene.Threads -> OpenSidebar {
+                    SessionsSidebarSample(
+                        ChatSamples.threadSessions(),
+                        selectedId = "s1",
+                        userLabel = ChatSamples.USER,
+                        statuses = ChatSamples.threadStatuses,
+                        drafts = ChatSamples.sessionDrafts,
+                        projects = ChatSamples.projects,
+                        threads = ChatSamples.threads,
                     )
                 }
                 PreviewScene.Bots -> OpenSidebar {
@@ -318,6 +368,21 @@ fun HeraldPreview(scene: PreviewScene, dark: Boolean = true, accent: String = DE
                 PreviewScene.Capabilities -> OpenSidebar {
                     SidebarPage { CapabilitiesView(PageSamples.capabilities, remember { TextFieldState() }, PreviewCapabilitiesActions, onBack = {}) }
                 }
+                PreviewScene.Config, PreviewScene.ConfigVoice, PreviewScene.ConfigSearch, PreviewScene.ConfigPicker -> OpenSidebar {
+                    val config = PageSamples.config(place = "voice".takeIf { scene == PreviewScene.ConfigVoice || scene == PreviewScene.ConfigPicker })
+                    SidebarPage {
+                        ConfigView(
+                            config,
+                            remember { TextFieldState(if (scene == PreviewScene.ConfigSearch) "memory" else "") },
+                            remember { TextFieldState() },
+                            PreviewConfigActions,
+                            onBack = {},
+                        )
+                    }
+                    if (scene == PreviewScene.ConfigPicker) {
+                        ChoiceSheet(ConfigCatalog.entry("voice.gpt_live.voice", config.schema!!, config.values!!), onDismiss = {}, onPick = { _, _ -> }, onOther = {})
+                    }
+                }
                 PreviewScene.Gateways -> Box(Modifier.fillMaxSize()) {
                     SampleChat(ChatSamples.reply)
                     GatewaysSheet(
@@ -382,6 +447,31 @@ fun HeraldPreview(scene: PreviewScene, dark: Boolean = true, accent: String = DE
                         )
                     }
                 }
+                PreviewScene.Inbox, PreviewScene.InboxFolder -> OpenSidebar {
+                    SidebarPage {
+                        Column(Modifier.fillMaxSize()) {
+                            InboxView(
+                                if (scene == PreviewScene.Inbox) InboxSamples.folders() else InboxSamples.folder(),
+                                PreviewInboxActions,
+                                onBack = {},
+                                onOpenSettings = {},
+                            )
+                        }
+                    }
+                }
+                PreviewScene.InboxReport -> OpenSidebar {
+                    SidebarPage {
+                        Column(Modifier.fillMaxSize()) {
+                            RunView(InboxSamples.report(), "☀️ Morning briefing", loading = false, note = null, onBack = {})
+                        }
+                    }
+                }
+                PreviewScene.InboxJobs -> OpenSidebar {
+                    SidebarPage { Column(Modifier.fillMaxSize()) { FollowView(InboxSamples.jobs(), PreviewInboxActions) } }
+                }
+                PreviewScene.InboxGroups -> OpenSidebar {
+                    SidebarPage { Column(Modifier.fillMaxSize()) { GroupsView(InboxSamples.groups(), PreviewInboxActions) } }
+                }
                 PreviewScene.JobEditor -> OpenSidebar {
                     SidebarPage {
                         JobEditorPage(
@@ -412,6 +502,17 @@ fun HeraldPreview(scene: PreviewScene, dark: Boolean = true, accent: String = DE
                         initiallyExpanded = "9f2c1ab47e0d55aa",
                     )
                 }
+                PreviewScene.FileMarkdown, PreviewScene.FileCode, PreviewScene.FileTable, PreviewScene.FileMissing -> {
+                    val (file, load) = FileSamples.of(scene)
+                    FileViewerPage(file, onDismiss = {}, load = { load }, download = { FileDownload.Failed("") }, preset = load)
+                }
+                // Drawn by the platform's own PDF reader, so it goes through loading rather than a preset.
+                PreviewScene.FilePdf -> FileViewerPage(
+                    FileSamples.pdfFile,
+                    onDismiss = {},
+                    load = { FileLoad.Failed("") },
+                    download = { FileDownload.Ready(FileSamples.pdf) },
+                )
                 PreviewScene.Models, PreviewScene.ModelsAll, PreviewScene.ModelSearch -> Box(Modifier.fillMaxSize()) {
                     SampleChat(ChatSamples.reply)
                     val settings = AppSettings(showPet = false, glow = glow, starredModels = PageSamples.starredModels, recentModels = PageSamples.recentModels)
@@ -434,6 +535,11 @@ fun HeraldPreview(scene: PreviewScene, dark: Boolean = true, accent: String = DE
                 PreviewScene.Processes -> Box(Modifier.fillMaxSize()) {
                     SampleChat(ChatSamples.reply)
                     ProcessesSheetView(visible = true, state = PageSamples.processes, onKill = {}, onDismiss = {}, initiallyExpanded = "proc_1")
+                }
+                PreviewScene.GoalStrip -> SampleChat(ChatSamples.reply.copy(control = PageSamples.control))
+                PreviewScene.Goal -> Box(Modifier.fillMaxSize()) {
+                    SampleChat(ChatSamples.reply)
+                    SessionControlSheetView(visible = true, control = PageSamples.control, busy = null, error = null, onAction = { _, _, _ -> }, onDismiss = {})
                 }
                 PreviewScene.Settings -> SettingsView(
                     settings = AppSettings(theme = if (dark) ThemeMode.Dark else ThemeMode.Light, accent = accent, glow = glow),
@@ -489,6 +595,19 @@ private object PreviewCapabilitiesActions : CapabilitiesActions {
     override fun dismissMessage() = Unit
 }
 
+private object PreviewConfigActions : ConfigActions {
+    override fun refresh() = Unit
+    override fun open(view: ConfigPlace) = Unit
+    override fun back() = false
+    override fun set(entry: ConfigEntry, value: JsonElement) = Unit
+    override fun confirmChange() = Unit
+    override fun cancelChange() = Unit
+    override fun saveYaml() = Unit
+    override fun discardYaml() = Unit
+    override fun keepEditing() = Unit
+    override fun dismissMessage() = Unit
+}
+
 private object PreviewScheduledActions : ScheduledActions {
     override fun refresh() = Unit
     override fun newJob() = Unit
@@ -518,6 +637,7 @@ private class PreviewRoomActions : RoomActions {
 private fun SampleChat(
     state: ChatState,
     voiceChat: VoiceChatState = VoiceChatState(),
+    readAloud: ReadAloudState = ReadAloudState(),
     placeholder: String = ChatSamples.PLACEHOLDER,
     comments: List<PendingComment> = emptyList(),
     composerText: String = "",
@@ -536,6 +656,7 @@ private fun SampleChat(
         comments = comments,
         voiceChat = voiceChat,
         dictation = DictationState(),
+        readAloud = readAloud,
         suggestions = emptyList(),
         sprite = null,
         placeholder = placeholder,
@@ -589,6 +710,10 @@ private fun SidebarPreview() = HeraldPreview(PreviewScene.Sidebar)
 
 @Preview(widthDp = 412, heightDp = 892)
 @Composable
+private fun ThreadsPreview() = HeraldPreview(PreviewScene.Threads)
+
+@Preview(widthDp = 412, heightDp = 892)
+@Composable
 private fun SettingsPreview() = HeraldPreview(PreviewScene.Settings)
 
 @Preview(widthDp = 412, heightDp = 892)
@@ -610,6 +735,10 @@ private fun UsagePreview() = HeraldPreview(PreviewScene.Usage)
 @Preview(widthDp = 412, heightDp = 892)
 @Composable
 private fun ProcessesPreview() = HeraldPreview(PreviewScene.Processes)
+
+@Preview(widthDp = 412, heightDp = 892)
+@Composable
+private fun GoalPreview() = HeraldPreview(PreviewScene.Goal)
 
 @Preview(widthDp = 412, heightDp = 892)
 @Composable

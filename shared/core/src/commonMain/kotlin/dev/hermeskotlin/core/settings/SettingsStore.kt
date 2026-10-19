@@ -86,6 +86,8 @@ data class AppSettings(
     val wrapCode: Boolean = false,
     /** Show the profile's pet (when the gateway has one on) above the composer. */
     val showPet: Boolean = true,
+    /** Automatically fetch linked webpages and thumbnails; off until the user opts in. */
+    val showLinkPreviews: Boolean = false,
     val voicePause: VoicePause = VoicePause.Normal,
     /** The mic for dictation in the composer and on an empty chat. Off, it goes, and the model name gets the room. */
     val dictation: Boolean = true,
@@ -97,10 +99,47 @@ data class AppSettings(
     /** Notify when the agent waits on an approval or a question while the app is in the background. */
     val notifyRequests: Boolean = true,
     /**
+     * Replies and requests in chats other than the one on screen notify while Herald is open too, as they do
+     * in the background.
+     */
+    val notifyOtherChatsInApp: Boolean = false,
+    /**
+     * While in a chat, Herald tells of the other chats: a dot on Sessions, the banner, Next and the buzz. Off by
+     * default; off, nothing watches them and the gateway's live list isn't polled for them.
+     */
+    val otherChatsAlerts: Boolean = false,
+    /** With [otherChatsAlerts], a strip over the chat when another chat replies or starts waiting on the user. */
+    val otherChatsBanner: Boolean = true,
+    /** With [otherChatsAlerts], a short buzz when another chat starts waiting on the user (not for replies). */
+    val otherChatsVibrate: Boolean = true,
+    /**
      * Bot messages reach the phone off the gateway's network too, end-to-end encrypted through ntfy (herald-push).
      * The one thing that keeps Herald up in the background, with a quiet notification.
      */
     val pushAnywhere: Boolean = false,
+    /** The agent may use tools on this phone ([phoneToolsOn]); off, none of them, whatever their own switches say. */
+    val phoneTools: Boolean = false,
+    /** The phone tools switched on, by gateway name (`PhoneTool.id`). Each starts off. */
+    val phoneToolsOn: List<String> = emptyList(),
+    /**
+     * An approval or a question from a chat out of sight rings like an incoming call instead of a plain notification.
+     * Only with [phoneTools] on (see [ringsForAnswers]). It only ever rings this phone: the agent never calls anyone.
+     */
+    val phoneRings: Boolean = false,
+    /** Answering such a call puts Hermes on the line to ask it aloud, with no chat on screen; off, Answer opens the chat. */
+    val phoneRingsTalk: Boolean = true,
+    /**
+     * Such a call rings Herald on the watch too, where answering puts Hermes on the line in a live call. Only when the
+     * gateway talks live, since the watch has no chat to open instead.
+     */
+    val watchRings: Boolean = true,
+    /**
+     * Nothing rings from [quietFrom] to [quietUntil], minutes into the day on this phone's clock: the agent's calls
+     * don't get through, and an approval or a question is the usual notification (see `quietNow`).
+     */
+    val quietHours: Boolean = false,
+    val quietFrom: Int = 22 * 60,
+    val quietUntil: Int = 7 * 60,
     /** Ask GitHub, where the app is published, whether a newer release is out. */
     val checkForUpdates: Boolean = true,
     /** Ask for a fingerprint, face or the screen lock when Herald opens, and keep it out of Recents. */
@@ -109,6 +148,12 @@ data class AppSettings(
     val starredModels: List<String> = emptyList(),
     /** Models last picked in the model picker (`provider/id`), newest first. */
     val recentModels: List<String> = emptyList(),
+    /** The sidebar's Pinned section is folded: only pinned chats that are open or have something going on show. */
+    val pinnedCollapsed: Boolean = false,
+    /** The sidebar's Threads section is folded the same way: only threads that are open or have something going on show. */
+    val threadsCollapsed: Boolean = false,
+    /** The sidebar shows its projects as one button that opens a list, not a row of chips that scrolls sideways. */
+    val projectsAsDropdown: Boolean = false,
 )
 
 /**

@@ -2,6 +2,8 @@ package dev.hermeskotlin.ui.chat
 
 import dev.hermeskotlin.ui.imeVisible
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
@@ -20,12 +22,17 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 import androidx.compose.runtime.Stable
+import dev.hermeskotlin.core.chat.linkFileUris
+import dev.hermeskotlin.core.media.GatewayFile
+import dev.hermeskotlin.core.media.LinkPreview
+import dev.hermeskotlin.designsystem.components.LocalFileLinks
 import kotlinx.coroutines.flow.collectLatest
 import kotlin.math.abs
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -161,6 +168,7 @@ import com.composables.icons.lucide.CloudOff
 import com.composables.icons.lucide.ListEnd
 import com.composables.icons.lucide.Info
 import dev.hermeskotlin.core.chat.MESSAGE_AGENT_TOOL
+import dev.hermeskotlin.core.chat.toolInProgress
 import dev.hermeskotlin.core.bots.Bot
 import dev.hermeskotlin.core.bots.handle
 import dev.hermeskotlin.core.bots.mentionQuery
@@ -168,7 +176,6 @@ import dev.hermeskotlin.core.bots.mentionable
 import dev.hermeskotlin.ui.bots.BotAvatar
 import dev.hermeskotlin.ui.bots.LocalBotFaces
 import com.composables.icons.lucide.Lucide
-import com.composables.icons.lucide.PanelLeft
 import com.composables.icons.lucide.Pencil
 import com.composables.icons.lucide.MessageSquare
 import com.composables.icons.lucide.RotateCw
@@ -178,6 +185,7 @@ import com.composables.icons.lucide.Users
 import com.composables.icons.lucide.Plus
 import com.composables.icons.lucide.RefreshCw
 import com.composables.icons.lucide.Square
+import com.composables.icons.lucide.Volume2
 import com.composables.icons.lucide.SquarePen
 import com.composables.icons.lucide.FileDiff
 import com.composables.icons.lucide.ShieldAlert
@@ -198,6 +206,7 @@ import com.composeunstyled.theme.Theme
 import com.composeunstyled.theme.rememberColoredIndication
 import dev.hermeskotlin.core.chat.Attachment
 import dev.hermeskotlin.core.chat.ChatMessage
+import dev.hermeskotlin.core.chat.TranscriptEvent
 import dev.hermeskotlin.core.chat.GatewayNotice
 import dev.hermeskotlin.core.chat.ChatState
 import dev.hermeskotlin.core.chat.OutgoingAttachment
@@ -231,10 +240,13 @@ import dev.hermeskotlin.ui.pet.PetSheet
 import dev.hermeskotlin.ui.pet.PetView
 import dev.hermeskotlin.ui.pet.rememberPetState
 import dev.hermeskotlin.ui.voice.DictationState
+import dev.hermeskotlin.ui.voice.ReadAloudState
 import dev.hermeskotlin.ui.voice.VoiceChatState
 import dev.hermeskotlin.ui.voice.VoicePanel
 import dev.hermeskotlin.ui.voice.VoicePhase
 import dev.hermeskotlin.ui.voice.VoiceScreen
+import dev.hermeskotlin.ui.voice.briefError
+import dev.hermeskotlin.core.voice.readAloudText
 import dev.hermeskotlin.core.voice.speakableText
 import androidx.compose.runtime.saveable.rememberSaveable
 import dev.hermeskotlin.ui.voice.rememberMicrophonePermission
@@ -291,6 +303,8 @@ import dev.hermeskotlin.designsystem.display
 import dev.hermeskotlin.designsystem.typography
 import dev.hermeskotlin.designsystem.warning
 import dev.hermeskotlin.ui.LocalAppSettings
+import dev.hermeskotlin.ui.KeepScreenOn
+import dev.hermeskotlin.ui.rememberChangingConfigurations
 import dev.hermeskotlin.ui.components.EmptyState
 import dev.hermeskotlin.ui.components.messageTime
 import dev.hermeskotlin.ui.components.uses24HourClock
@@ -299,6 +313,8 @@ import androidx.compose.runtime.produceState
 import kotlin.time.Clock
 import kotlinx.coroutines.launch
 import org.koin.compose.viewmodel.koinViewModel
+import dev.hermeskotlin.ui.sessions.OtherChatEvent
+import dev.hermeskotlin.ui.sessions.SessionsBadge
 
 @Composable
 fun ChatScreen(
@@ -312,9 +328,18 @@ fun ChatScreen(
     /** Switches profile (`/profile`); null is the gateway's launch profile. */
     onSwitchProfile: (String?) -> Unit,
     viewModel: ChatViewModel = koinViewModel(),
+    /** What the Sessions button says about the other chats. */
+    sessionsBadge: SessionsBadge = SessionsBadge(),
+    /** Something that just happened in another chat, for the banner; null shows none. */
+    otherChatBanner: OtherChatEvent? = null,
+    onOpenOtherChat: (OtherChatEvent) -> Unit = {},
+    onDismissOtherChat: (OtherChatEvent) -> Unit = {},
+    /** Goes to the next chat needing the user; false when none does. Null offers no Next. */
+    onNextChat: (() -> Boolean)? = null,
 ) {
     LaunchedEffect(target) { viewModel.open(target) }
-    val state = viewModel.state.collectAsStateWithLifecycle().value
+    val transcript = viewModel.transcript.collectAsStateWithLifecycle().value
+    val state = transcript.state
     val picker = viewModel.picker.collectAsStateWithLifecycle().value
     val connection = viewModel.connectionState.collectAsStateWithLifecycle().value
     val connected = connection is ConnectionState.Connected
@@ -327,7 +352,12 @@ fun ChatScreen(
     var usageOpen by remember { mutableStateOf(false) }
     var processesOpen by remember { mutableStateOf(false) }
     var checkpointsOpen by remember { mutableStateOf(false) }
+    var controlOpen by remember { mutableStateOf(false) }
+    // Cleared (here or on another client) while open, there is nothing left to show.
+    val hasControl = state.control != null
+    LaunchedEffect(hasControl) { if (!hasControl) controlOpen = false }
     var viewing by remember { mutableStateOf<ViewerImage?>(null) }
+    var previewing by remember { mutableStateOf<GatewayFile?>(null) }
     var notice by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(notice) {
         if (notice != null) {
@@ -347,8 +377,24 @@ fun ChatScreen(
             viewModel.toggleDictation()
         }
     }
+    // Turning the phone rebuilds the screen without leaving it: the voice the chat owns plays on through it.
+    val changingConfigurations = rememberChangingConfigurations()
     // Dictation stops when the app leaves the screen; a voice chat goes on like a call (VoiceController.onBackground).
-    LifecycleEventEffect(Lifecycle.Event.ON_STOP) { viewModel.voice.onBackground() }
+    LifecycleEventEffect(Lifecycle.Event.ON_STOP) {
+        if (!changingConfigurations()) viewModel.voice.onBackground()
+        viewModel.onScreen(false)
+        // What's on screen now counts as read, so a reply that comes in while away is new.
+        viewModel.markLooked()
+    }
+    LifecycleEventEffect(Lifecycle.Event.ON_START) { viewModel.onScreen(true) }
+    // A room replacing the chat takes it off screen without a stop; a reply read aloud stops with it, but not
+    // with a turn of the phone.
+    DisposableEffect(viewModel) {
+        onDispose {
+            viewModel.onScreen(false)
+            if (!changingConfigurations()) viewModel.stopReading()
+        }
+    }
     LaunchedEffect(viewModel) {
         viewModel.requests.collect { request ->
             when (request) {
@@ -362,6 +408,8 @@ fun ChatScreen(
                 ChatRequest.OpenUsage -> usageOpen = true
                 ChatRequest.OpenProcesses -> processesOpen = true
                 ChatRequest.OpenCheckpoints -> checkpointsOpen = true
+                // The goal may have been cleared since the menu offered it; an empty sheet would stay up.
+                ChatRequest.OpenControl -> controlOpen = viewModel.state.value.control != null
                 ChatRequest.StartVoice -> startVoiceChat()
                 ChatRequest.StartDictation -> toggleDictation()
             }
@@ -393,6 +441,7 @@ fun ChatScreen(
         comments = viewModel.comments.collectAsStateWithLifecycle().value,
         voiceChat = viewModel.voice.chat.collectAsStateWithLifecycle().value,
         dictation = viewModel.voice.dictation.collectAsStateWithLifecycle().value,
+        readAloud = viewModel.voice.reading.collectAsStateWithLifecycle().value,
         suggestions = viewModel.suggestions.collectAsStateWithLifecycle().value,
         mentions = mentions,
         onMention = { bot ->
@@ -404,7 +453,10 @@ fun ChatScreen(
         placeholder = remember(target) { (if (target.storedSessionId == null) NEW_CHAT_PROMPTS else FOLLOW_UP_PROMPTS).random() },
         notice = notice,
         actions = viewModel,
+        widgetFiles = transcript.widgetFiles,
         editing = viewModel.editing.collectAsStateWithLifecycle().value,
+        // Only for the chat it was taken for, not one the screen moved on to (a branch, a fresh start).
+        readUpTo = target.readUpTo?.takeIf { state.storedSessionId == target.storedSessionId },
         onOpenSidebar = onOpenSidebar,
         // Already on an untouched new chat: nothing to start over from.
         onNewChat = onNewChat.takeIf { target.storedSessionId != null || state.messages.isNotEmpty() },
@@ -414,11 +466,18 @@ fun ChatScreen(
         onDictate = toggleDictation,
         onVoiceChat = startVoiceChat,
         onOpenPets = { petsOpen = true },
+        onOpenControl = viewModel::openControl,
         onViewImage = { viewing = it },
+        onOpenFile = { previewing = it },
         onNotice = { notice = it },
         wallpaper = rememberChatWallpaper(),
         place = target.gateway.label,
         profile = target.profile,
+        sessionsBadge = sessionsBadge,
+        otherChatBanner = otherChatBanner,
+        onOpenOtherChat = onOpenOtherChat,
+        onDismissOtherChat = onDismissOtherChat,
+        onNextChat = onNextChat?.let { next -> { if (!next()) notice = "Nothing waiting" } },
     )
 
     AttachSheet(visible = attachOpen, onDismiss = { attachOpen = false }, picker = attachmentPicker)
@@ -455,6 +514,20 @@ fun ChatScreen(
         onRestore = viewModel::restoreCheckpoint,
         running = state.running,
         onDismiss = { checkpointsOpen = false },
+    )
+    SessionControlSheet(
+        visible = controlOpen,
+        control = state.control,
+        controller = viewModel.control,
+        onAction = viewModel::runControl,
+        onDismiss = { controlOpen = false },
+    )
+    // A linked picture opens in the picture viewer, like one the reply delivered.
+    GatewayFileViewer(
+        file = previewing,
+        onDismiss = { previewing = null },
+        load = viewModel::previewFile,
+        download = viewModel::downloadFile,
     )
     viewing?.let { image ->
         CompositionLocalProvider(LocalMediaLoader provides viewModel::loadMedia) {
@@ -507,6 +580,8 @@ internal fun ChatView(
     comments: List<PendingComment> = emptyList(),
     voiceChat: VoiceChatState,
     dictation: DictationState,
+    /** The reply being read aloud, and why the last one couldn't be. */
+    readAloud: ReadAloudState = ReadAloudState(),
     suggestions: List<SlashSuggestion>,
     /** Bots matching the `@word` being typed, to pick one to mention. */
     mentions: List<Bot> = emptyList(),
@@ -515,8 +590,11 @@ internal fun ChatView(
     placeholder: String,
     notice: String?,
     actions: ChatActions,
+    widgetFiles: WidgetFiles? = null,
     /** The prompt being edited in the composer, whose send replaces it. */
     editing: String? = null,
+    /** How far this chat had been read when it was opened (epoch seconds); later messages are marked new. */
+    readUpTo: Double? = null,
     onOpenSidebar: () -> Unit,
     onNewChat: (() -> Unit)?,
     onOpenMenu: (() -> Unit)?,
@@ -525,7 +603,11 @@ internal fun ChatView(
     onDictate: () -> Unit,
     onVoiceChat: () -> Unit,
     onOpenPets: () -> Unit,
+    /** Opens the goal and loops sheet from the strip above the composer. */
+    onOpenControl: () -> Unit = {},
     onViewImage: (ViewerImage) -> Unit,
+    /** A tapped link to a file on the gateway. */
+    onOpenFile: (GatewayFile) -> Unit = {},
     onNotice: (String) -> Unit,
     /** The chat background from Settings, drawn behind the conversation (and frosted under the composer). */
     wallpaper: ImageBitmap? = null,
@@ -533,6 +615,11 @@ internal fun ChatView(
     place: String? = null,
     /** The profile the chat runs in; null is the launch profile, shown as "default". */
     profile: String? = null,
+    sessionsBadge: SessionsBadge = SessionsBadge(),
+    otherChatBanner: OtherChatEvent? = null,
+    onOpenOtherChat: (OtherChatEvent) -> Unit = {},
+    onDismissOtherChat: (OtherChatEvent) -> Unit = {},
+    onNextChat: (() -> Unit)? = null,
 ) {
     Box(
         Modifier
@@ -548,6 +635,14 @@ internal fun ChatView(
         val voiceOn = voiceChat.phase != VoicePhase.Off
         val voiceFull = voiceOn && !voiceFolded
         LaunchedEffect(voiceOn) { if (!voiceOn) voiceFolded = false }
+        // A reply read aloud plays to its end with the phone put down, and stops if it leaves the chat
+        // (regenerated, or a reload that keys it anew), so its Stop is never gone while it plays.
+        KeepScreenOn(readAloud.key != null)
+        // A chat whose transcript hasn't loaded yet hasn't lost it.
+        LaunchedEffect(readAloud.key, state.messages, state.historyLoaded) {
+            val key = readAloud.key ?: return@LaunchedEffect
+            if (state.historyLoaded && state.messages.none { it.key == key }) actions.stopReading()
+        }
         Column(
             Modifier
                 .widthIn(max = 760.dp)
@@ -565,6 +660,8 @@ internal fun ChatView(
                 onOpenSidebar = onOpenSidebar,
                 onNewChat = onNewChat,
                 onOpenMenu = onOpenMenu,
+                sessionsBadge = sessionsBadge,
+                onNextChat = onNextChat,
             )
             // The composer floats over the conversation, which scrolls on beneath it; its height pads the list.
             var dockHeight by remember { mutableIntStateOf(0) }
@@ -589,6 +686,8 @@ internal fun ChatView(
                 typeAfterVoice = false
                 if (composerShown) composerFocus.requestFocus()
             }
+            // A new loader each time the link comes back, so cards that failed offline try again; good ones come from the cache.
+            val linkPreviewLoader = remember<suspend (String) -> LinkPreview?>(actions, connected) { { url -> actions.loadLinkPreview(url) } }
             val commentHost = remember(comments, actions, composerShown) {
                 if (!composerShown) return@remember null
                 object : CommentHost {
@@ -613,7 +712,10 @@ internal fun ChatView(
                     if (state.historyLoaded && state.messages.isNotEmpty()) {
                         CompositionLocalProvider(
                             LocalMediaLoader provides actions::loadMedia,
+                            LocalWidgetFiles provides widgetFiles,
+                            LocalLinkPreviewLoader provides linkPreviewLoader,
                             LocalOpenImage provides onViewImage,
+                            LocalFileLinks provides { link -> GatewayFile.fromLink(link)?.let(onOpenFile) },
                             LocalNotice provides onNotice,
                             LocalSubagents provides SubagentContext(state.subagents, actions::stopSubagent),
                             LocalCommentHost provides commentHost,
@@ -630,6 +732,10 @@ internal fun ChatView(
                                 // A saved copy may lack what changed since; edits wait for the gateway's transcript.
                                 canChange = state.canChangeChat(connected && state.savedCopyAt == null),
                                 editing = editing,
+                                readUpTo = readUpTo,
+                                reading = readAloud.key,
+                                // The voice chat and dictation have the speaker and the microphone.
+                                canReadAloud = !voiceOn && !dictation.active,
                             )
                         }
                     } else Box(Modifier.fillMaxSize().padding(bottom = dockInset)) {
@@ -660,6 +766,22 @@ internal fun ChatView(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
+                    // Another chat replied or waits on the user. Kept while it slides away, so its text doesn't go first.
+                    var lastBanner by remember { mutableStateOf(otherChatBanner) }
+                    if (otherChatBanner != null) lastBanner = otherChatBanner
+                    AnimatedVisibility(
+                        visible = otherChatBanner != null,
+                        enter = fadeIn() + slideInVertically { -it },
+                        exit = fadeOut() + slideOutVertically { -it },
+                    ) {
+                        lastBanner?.let { event ->
+                            OtherChatBanner(
+                                event,
+                                onOpen = { onOpenOtherChat(event) },
+                                onDismiss = { onDismissOtherChat(event) },
+                            )
+                        }
+                    }
                     AnimatedVisibility(visible = linkStatus != null, enter = fadeIn(), exit = fadeOut()) {
                         OfflineBanner(place, lastLinkStatus, onRetry = onRetryConnection)
                     }
@@ -688,6 +810,7 @@ internal fun ChatView(
                         attachmentError = attachmentError,
                         voiceChat = voiceChat,
                         dictation = dictation,
+                        readAloud = readAloud,
                         suggestions = suggestions,
                         mentions = mentions,
                         onMention = onMention,
@@ -703,6 +826,7 @@ internal fun ChatView(
                         onAttach = onAttach,
                         onDictate = onDictate,
                         onVoiceChat = onVoiceChat,
+                        onOpenControl = onOpenControl,
                         voiceFull = voiceFull,
                         onExpandVoice = { voiceFolded = false },
                     )
@@ -738,6 +862,7 @@ internal fun ChatView(
                     typeAfterVoice = true
                     actions.stopVoiceChat()
                 },
+                onSendNow = actions::sendVoiceNow,
             )
         }
     }
@@ -756,6 +881,7 @@ private fun ColumnScope.Dock(
     attachmentError: String?,
     voiceChat: VoiceChatState,
     dictation: DictationState,
+    readAloud: ReadAloudState,
     suggestions: List<SlashSuggestion>,
     mentions: List<Bot>,
     onMention: (Bot) -> Unit,
@@ -771,6 +897,8 @@ private fun ColumnScope.Dock(
     onAttach: () -> Unit,
     onDictate: () -> Unit,
     onVoiceChat: () -> Unit,
+    /** Opens the goal and loops sheet from the strip above the composer. */
+    onOpenControl: () -> Unit,
     /** The voice chat is open over the whole screen. */
     voiceFull: Boolean,
     onExpandVoice: () -> Unit,
@@ -792,8 +920,9 @@ private fun ColumnScope.Dock(
         )
     }
     attachmentError?.let { Banner(it, actionLabel = null, onAction = actions::dismissAttachmentError) }
-    voiceChat.error?.let { Banner(it, actionLabel = null, onAction = actions::dismissVoiceChatError) }
-    dictation.error?.let { Banner(it, actionLabel = null, onAction = actions::dismissDictationError) }
+    voiceChat.error?.let { Banner(briefError(it), actionLabel = null, onAction = actions::dismissVoiceChatError) }
+    dictation.error?.let { Banner(briefError(it), actionLabel = null, onAction = actions::dismissDictationError) }
+    readAloud.error?.let { Banner(briefError(it), actionLabel = null, onAction = actions::dismissReadAloudError) }
     AnimatedVisibility(visible = notice != null) { NoticeLine(notice.orEmpty()) }
     // One place says what's happening: the current action, with the status text and plan folded beneath.
     AnimatedVisibility(visible = state.running, enter = fadeIn(), exit = fadeOut()) {
@@ -809,6 +938,8 @@ private fun ColumnScope.Dock(
         )
     }
     if (!state.running) TodoPanel(state.todos, live = state.todosLive, hazeState = hazeState)
+    // The chat's automation sits here whether or not a turn runs: the goal works on its own between turns.
+    SessionControlStrip(state.control, hazeState, onOpen = onOpenControl)
 
     if (state.inputRequests.isNotEmpty()) {
         // The task's Stop is on the live task card above.
@@ -823,6 +954,7 @@ private fun ColumnScope.Dock(
                 onMute = actions::toggleVoiceMute,
                 onEnd = actions::stopVoiceChat,
                 onExpand = onExpandVoice,
+                onSendNow = actions::sendVoiceNow,
             )
         }
     } else {
@@ -921,13 +1053,17 @@ internal fun TopBar(
     onOpenMenu: (() -> Unit)?,
     /** In place of New chat and the menu, e.g. a room's own buttons. */
     trailing: (@Composable () -> Unit)? = null,
+    /** What the Sessions button says about the other chats. */
+    sessionsBadge: SessionsBadge = SessionsBadge(),
+    /** A long press on Sessions: the next chat needing the user. */
+    onNextChat: (() -> Unit)? = null,
 ) {
     Row(
         Modifier.fillMaxWidth().padding(start = 4.dp, end = 10.dp, top = 4.dp, bottom = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        BarButton(Lucide.PanelLeft, "Sessions", onClick = onOpenSidebar, tint = Theme[colors][textTertiary])
+        SessionsButton(sessionsBadge, onClick = onOpenSidebar, onNext = onNextChat)
         Column(Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 titleFace?.invoke()
@@ -1137,6 +1273,12 @@ private fun Messages(
     connected: Boolean,
     canChange: Boolean,
     editing: String?,
+    /** How far the chat had been read when it was opened (epoch seconds); later messages are marked new. */
+    readUpTo: Double? = null,
+    /** The reply being read aloud, by its key. */
+    reading: String? = null,
+    /** Replies offer Read aloud. */
+    canReadAloud: Boolean = true,
 ) {
     var confirm by remember { mutableStateOf<Pair<MessageChange, String>?>(null) }
     val lastPrompt = messages.lastOrNull { it is ChatMessage.User }?.key
@@ -1200,7 +1342,45 @@ private fun Messages(
     var seenTail by remember { mutableStateOf(tail) }
     LaunchedEffect(awayFromBottom, tail) { if (!awayFromBottom) seenTail = tail }
     val newBelow = awayFromBottom && tail != seenTail
+    // Where the messages that came since the chat was last read begin. It stays put for the rest of this visit,
+    // so reading on doesn't move or remove it under the reader; the next visit starts from the new last look.
+    // Older pages load first while every loaded message is still new.
+    var unreadFrom by remember(readUpTo) { mutableStateOf<String?>(null) }
+    var unreadPagesLoaded by remember(readUpTo) { mutableStateOf(0) }
+    // The oldest message when a page was last asked for: a reply streaming in reruns this before the page loads.
+    var unreadPageAskedAt by remember(readUpTo) { mutableStateOf<String?>(null) }
+    // Once the user sends from here, what follows is their own conversation, not news to mark or jump to.
+    var unreadSettled by remember(readUpTo) { mutableStateOf(false) }
+    LaunchedEffect(readUpTo, messages, olderMessages, loadingOlder) {
+        if (readUpTo == null || unreadFrom != null || unreadSettled) return@LaunchedEffect
+        if (messages.any { it is ChatMessage.User && it.pending }) {
+            unreadSettled = true
+            return@LaunchedEffect
+        }
+        if (loadingOlder) return@LaunchedEffect
+        val key = when (val step = unreadLineStep(messages, readUpTo, olderMessages, unreadPagesLoaded)) {
+            UnreadLineStep.LoadOlder -> {
+                val oldest = messages.firstOrNull()?.key
+                if (oldest != unreadPageAskedAt) {
+                    unreadPageAskedAt = oldest
+                    unreadPagesLoaded++
+                    actions.loadOlder()
+                }
+                return@LaunchedEffect
+            }
+            UnreadLineStep.None -> return@LaunchedEffect
+            is UnreadLineStep.Above -> step.key
+        }
+        unreadFrom = key
+        val index = messages.indexOfFirst { it.key == key }
+        if (index >= 0) {
+            // Opened at the line instead of the end, so reading starts where it was left.
+            pinned = false
+            listState.scrollToItem(index)
+        }
+    }
     val unservable = remember(messages) { unservableEchoes(messages) }
+    val unreadLine = remember(messages, unreadFrom, readUpTo) { unreadLineKey(messages, unreadFrom, readUpTo) }
     Box(Modifier.fillMaxSize()) {
         LazyColumn(
             state = listState,
@@ -1211,62 +1391,72 @@ private fun Messages(
             itemsIndexed(messages, key = { _, it -> it.key }) { index, message ->
                 // Rows of one exchange with another bot are tied together by a line in that bot's colour.
                 val partner = partners.getOrNull(index)
-                val linkedAbove = partner != null && partners.getOrNull(index - 1) == partner
-                val linkedBelow = partner != null && partners.getOrNull(index + 1) == partner
+                // The "New messages" line breaks the tie: it never runs through it.
+                val divided = message.key == unreadLine
+                val linkedAbove = partner != null && !divided && partners.getOrNull(index - 1) == partner
+                val linkedBelow = partner != null && partners.getOrNull(index + 1) == partner &&
+                    messages.getOrNull(index + 1)?.key != unreadLine
                 val rail = partner?.let { name -> faces.find(name)?.let { Color(0xFF000000 or botLook(it).color.toLong()) } }
-                Box(
-                    Modifier.drawBehind {
-                        if (rail != null && (linkedAbove || linkedBelow)) {
-                            // In the list's side margin, clear of avatars and text.
-                            val x = -9.dp.toPx()
-                            val gap = 20.dp.toPx()
-                            drawLine(
-                                rail.copy(alpha = 0.55f),
-                                start = Offset(x, if (linkedAbove) -gap else 6.dp.toPx()),
-                                end = Offset(x, if (linkedBelow) size.height + gap else size.height - 6.dp.toPx()),
-                                strokeWidth = 3.dp.toPx(),
-                                cap = androidx.compose.ui.graphics.StrokeCap.Round,
-                            )
+                Column {
+                    // The line marking where the new messages start sits on top of the first of them.
+                    if (divided) UnreadDivider(Modifier.padding(bottom = 20.dp))
+                    Box(
+                        Modifier.drawBehind {
+                            if (rail != null && (linkedAbove || linkedBelow)) {
+                                // In the list's side margin, clear of avatars and text.
+                                val x = -9.dp.toPx()
+                                val gap = 20.dp.toPx()
+                                drawLine(
+                                    rail.copy(alpha = 0.55f),
+                                    start = Offset(x, if (linkedAbove) -gap else 6.dp.toPx()),
+                                    end = Offset(x, if (linkedBelow) size.height + gap else size.height - 6.dp.toPx()),
+                                    strokeWidth = 3.dp.toPx(),
+                                    cap = androidx.compose.ui.graphics.StrokeCap.Round,
+                                )
+                            }
+                        },
+                    ) {
+                    when (message) {
+                        is ChatMessage.User -> UserBubble(
+                            message,
+                            actions,
+                            connected,
+                            // Any prompt with a stored row is edited in place; the last one without can still go through /undo.
+                            // Not while the prompt is still on its way or its delivery is in doubt.
+                            editLabel = if (chat.canEdit(message.key)) "Edit" else "Edit last prompt",
+                            onEdit = if (chat.canEdit(message.key)) {
+                                rewind(MessageChange.Edit, message.key, message.key) { actions.startEdit(message.key) }
+                            } else {
+                                ask(MessageChange.EditLastPrompt, message.key)
+                                    .takeIf { message.key == lastPrompt && !message.pending && message.check == null }
+                            }.takeIf { editing != message.key },
+                            onBranch = ask(MessageChange.Branch, message.key).takeIf { !message.pending && message.check == null },
+                            editing = editing == message.key,
+                        )
+                        is ChatMessage.Assistant -> {
+                            val reply = @Composable {
+                                AssistantReply(
+                                    message,
+                                    onBranch = ask(MessageChange.Branch, message.key),
+                                    onRegenerate = chat.regenerateTarget(message.key)?.let { prompt ->
+                                        rewind(MessageChange.Regenerate, prompt.key, message.key) { actions.regenerate(message.key) }
+                                    },
+                                    last = message.key == lastReply,
+                                    unservable = unservable,
+                                    reading = message.key == reading,
+                                    onReadAloud = if (canReadAloud) ({ text -> actions.readAloud(message.key, text) }) else null,
+                                    onStopReading = actions::stopReading,
+                                )
+                            }
+                            // An answer to another bot's message folds under it; never while it's still being written.
+                            val to = message.repliedTo
+                            if (to != null && !message.streaming) RepliedToFold(to, message.text, reply) else reply()
                         }
-                    },
-                ) {
-                when (message) {
-                    is ChatMessage.User -> UserBubble(
-                        message,
-                        actions,
-                        connected,
-                        // Any prompt with a stored row is edited in place; the last one without can still go through /undo.
-                        // Not while the prompt is still on its way or its delivery is in doubt.
-                        editLabel = if (chat.canEdit(message.key)) "Edit" else "Edit last prompt",
-                        onEdit = if (chat.canEdit(message.key)) {
-                            rewind(MessageChange.Edit, message.key, message.key) { actions.startEdit(message.key) }
-                        } else {
-                            ask(MessageChange.EditLastPrompt, message.key)
-                                .takeIf { message.key == lastPrompt && !message.pending && message.check == null }
-                        }.takeIf { editing != message.key },
-                        onBranch = ask(MessageChange.Branch, message.key).takeIf { !message.pending && message.check == null },
-                        editing = editing == message.key,
-                    )
-                    is ChatMessage.Assistant -> {
-                        val reply = @Composable {
-                            AssistantReply(
-                                message,
-                                onBranch = ask(MessageChange.Branch, message.key),
-                                onRegenerate = chat.regenerateTarget(message.key)?.let { prompt ->
-                                    rewind(MessageChange.Regenerate, prompt.key, message.key) { actions.regenerate(message.key) }
-                                },
-                                last = message.key == lastReply,
-                                unservable = unservable,
-                            )
-                        }
-                        // An answer to another bot's message folds under it; never while it's still being written.
-                        val to = message.repliedTo
-                        if (to != null && !message.streaming) RepliedToFold(to, message.text, reply) else reply()
+                        is ChatMessage.Event -> TranscriptEventRow(message.event)
+                        is ChatMessage.Command -> CommandOutput(message)
+                        is ChatMessage.Notice -> NoticeLine(message)
                     }
-                    is ChatMessage.Event -> TranscriptEventRow(message.event)
-                    is ChatMessage.Command -> CommandOutput(message)
-                    is ChatMessage.Notice -> NoticeLine(message)
-                }
+                    }
                 }
             }
         }
@@ -1840,6 +2030,11 @@ private fun AssistantReply(
     last: Boolean,
     /** The chat's generated pictures' paths that can't be loaded, taken out wherever they're repeated. */
     unservable: List<GeneratedImage> = emptyList(),
+    /** This reply is being read aloud: Stop shows in place of Read aloud. */
+    reading: Boolean = false,
+    /** Reads the reply's text, as shown, aloud; null when it can't be now. */
+    onReadAloud: ((String) -> Unit)? = null,
+    onStopReading: () -> Unit = {},
 ) {
     val settings = LocalAppSettings.current
     val showReasoning = settings.showReasoning && message.reasoning.isNotBlank()
@@ -1853,7 +2048,7 @@ private fun AssistantReply(
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         ReplyHeader(message.timestamp.takeUnless { message.streaming })
         // What's happening now is said once, above the composer; the reply keeps only what it's made of.
-        if (showReasoning) Reasoning(message.reasoning)
+        if (showReasoning) Reasoning(message.reasoning, message.streaming)
         // While the turn runs its finished steps are listed as they land; once it ends they fold into the pill.
         if (showTools) if (message.streaming) LiveSteps(listedTools, message.key) else Tools(listedTools, message.key)
         if (generated.isNotEmpty()) ReplyMediaList(remember(generated) { generated.map { it.asMedia() } })
@@ -1871,8 +2066,11 @@ private fun AssistantReply(
                 )
             }
             // Not while it streams: the text and its blocks are still changing under the selection.
-            CommentableSelection(source.takeUnless { message.streaming }) { MarkdownText(text, streaming = message.streaming) }
+            CommentableSelection(source.takeUnless { message.streaming }) {
+                MarkdownText(remember(text) { linkFileUris(text) }, streaming = message.streaming)
+            }
         }
+        if (settings.showLinkPreviews && !message.streaming) LinkPreviewCards(text)
         if (media.isNotEmpty()) ReplyMediaList(media)
         when (message.outcome) {
             TurnOutcome.Error -> Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -1890,6 +2088,8 @@ private fun AssistantReply(
         }
         val usage = message.usage?.takeIf { settings.showUsage && !message.streaming }
         val actionable = !message.streaming && text.isNotBlank()
+        // A reply of only code or files has nothing to say.
+        val speakable = if (actionable) remember(text) { readAloudText(text).isNotEmpty() } else false
         if (actionable || usage != null) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 usage?.let {
@@ -1903,10 +2103,14 @@ private fun AssistantReply(
                 Spacer(Modifier.weight(1f))
                 if (actionable) {
                     // On the end, under the thumb of the hand holding the phone; Copy, the one used most, sits last.
-                    // Copy's padding trimmed off the end lines its icon up with the reply's edge; all three lose 4dp on top to sit close under it.
+                    // Copy's padding trimmed off the end lines its icon up with the reply's edge; all of them lose 4dp on top to sit close under it.
                     val action = Modifier.trimEndTop(end = 0.dp, top = 4.dp)
                     onBranch?.let { ReplyAction(Lucide.GitBranch, "Branch from here", it, action) }
                     onRegenerate?.let { ReplyAction(Lucide.RefreshCw, "Regenerate", it, action) }
+                    when {
+                        reading -> ReplyAction(Lucide.Square, "Stop reading", onStopReading, action)
+                        speakable && onReadAloud != null -> ReplyAction(Lucide.Volume2, "Read aloud", { onReadAloud(text) }, action)
+                    }
                     CopyButton(text, Modifier.trimEndTop(end = 16.dp, top = 4.dp).size(MinTouchTarget))
                 }
             }
@@ -1954,6 +2158,100 @@ private fun NoticeLine(message: ChatMessage.Notice) {
         Text(message.text, style = Theme[typography][caption], color = Theme[colors][textTertiary])
     }
 }
+
+/** "New messages" between hairlines, above the first message that came since the chat was last read. */
+@Composable
+private fun UnreadDivider(modifier: Modifier = Modifier) {
+    val line = Theme[colors][accentText].copy(alpha = 0.45f)
+    Row(
+        modifier.fillMaxWidth().semantics { heading() },
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(Modifier.weight(1f).height(1.dp).background(line))
+        Text("New messages", style = Theme[typography][caption], color = Theme[colors][accentText])
+        Box(Modifier.weight(1f).height(1.dp).background(line))
+    }
+}
+
+/**
+ * The first message newer than [readUpTo] (epoch seconds) that the person would call new: a reply, a prompt
+ * from elsewhere, or another bot's row. Messages without a time (a reply still streaming) count as new.
+ * Null when every message is older, or when nothing in [messages] is new.
+ */
+internal fun firstUnreadKey(messages: List<ChatMessage>, readUpTo: Double): String? =
+    messages.firstOrNull { it.isNewerThan(readUpTo) }?.key
+
+/**
+ * The message the "New messages" line sits on: the one placed for this visit ([unreadFrom]), or the first new message
+ * now once that one is gone or no longer new. A running turn's saved step folds into the live reply that repeats it,
+ * and splits off the answer before it when its prompt doesn't show, which leaves that answer's key and time.
+ */
+internal fun unreadLineKey(messages: List<ChatMessage>, unreadFrom: String?, readUpTo: Double?): String? {
+    if (unreadFrom == null || readUpTo == null) return unreadFrom
+    if (messages.firstOrNull { it.key == unreadFrom }?.isNewerThan(readUpTo) == true) return unreadFrom
+    return firstUnreadKey(messages, readUpTo)
+}
+
+/** What to do next about the "New messages" line, given what is loaded so far. */
+internal sealed interface UnreadLineStep {
+    /** Every loaded message is new and there's more history: fetch an older page first. */
+    data object LoadOlder : UnreadLineStep
+
+    /** No line: nothing is new, or the first new message is beyond the pages worth fetching. */
+    data object None : UnreadLineStep
+
+    /** The line goes above the message [key]. */
+    data class Above(val key: String) : UnreadLineStep
+}
+
+/**
+ * Where the line goes once [pagesLoaded] older pages have been fetched. Past [UNREAD_PAGE_LIMIT] pages with
+ * everything still new, the first new message is further back still, so a line above the oldest loaded one
+ * would be in the wrong place (loading more would show new messages above it). Then there's no line at all
+ * and the chat opens at the bottom, as it did before the line existed.
+ */
+internal fun unreadLineStep(messages: List<ChatMessage>, readUpTo: Double, olderMessages: Boolean, pagesLoaded: Int): UnreadLineStep {
+    if (needsOlderForUnread(messages, readUpTo, olderMessages)) {
+        return if (pagesLoaded < UNREAD_PAGE_LIMIT) UnreadLineStep.LoadOlder else UnreadLineStep.None
+    }
+    return firstUnreadKey(messages, readUpTo)?.let(UnreadLineStep::Above) ?: UnreadLineStep.None
+}
+
+/**
+ * Whether the line can't be placed yet: every loaded message is new and the conversation goes back further,
+ * so the first new message may be on an older page.
+ */
+internal fun needsOlderForUnread(messages: List<ChatMessage>, readUpTo: Double, olderMessages: Boolean): Boolean =
+    olderMessages && messages.firstNotNullOfOrNull { it.sentAt }?.let { it > readUpTo } != false
+
+/**
+ * When a prompt, a reply or another bot's message happened (epoch seconds); null for other rows and for a
+ * reply still streaming.
+ */
+internal val ChatMessage.sentAt: Double?
+    get() = when (this) {
+        is ChatMessage.User -> timestamp
+        is ChatMessage.Assistant -> timestamp
+        is ChatMessage.Event -> timestamp.takeIf { event is TranscriptEvent.FromBot }
+        else -> null
+    }
+
+private fun ChatMessage.isNewerThan(readUpTo: Double): Boolean = when (this) {
+    is ChatMessage.User -> (timestamp ?: return false) > readUpTo + UNREAD_SLACK_SECONDS
+    // A reply with no time yet is still being written, so it came after the last look.
+    is ChatMessage.Assistant -> (timestamp ?: Double.MAX_VALUE) > readUpTo + UNREAD_SLACK_SECONDS
+    // Another bot writing in is news even when this bot stays silent. The machinery's own rows (deliveries,
+    // routines, failures) aren't: the line goes above something the person would want to read.
+    is ChatMessage.Event -> event is TranscriptEvent.FromBot && (timestamp ?: return false) > readUpTo + UNREAD_SLACK_SECONDS
+    else -> false
+}
+
+/** Same slack as the sidebar's unread dot: the gateway and the phone round times differently. */
+private const val UNREAD_SLACK_SECONDS = 1.0
+
+/** How many older pages are fetched at most to find where the new messages start. */
+internal const val UNREAD_PAGE_LIMIT = 5
 
 /** A slash command and what it printed: a quiet outlined card in the terminal face, local to this device. */
 @Composable
@@ -2142,7 +2440,7 @@ private fun Disclosure(
 
 /** The reply's reasoning, folded; live progress is the dock's to show. */
 @Composable
-private fun Reasoning(text: String) {
+private fun Reasoning(text: String, streaming: Boolean) {
     var expanded by remember { mutableStateOf(false) }
     Disclosure(
         icon = { UnstyledIcon(Lucide.Brain, contentDescription = null, tint = Theme[colors][textTertiary], modifier = Modifier.size(16.dp)) },
@@ -2150,7 +2448,7 @@ private fun Reasoning(text: String) {
         expanded = expanded,
         onToggle = { expanded = !expanded },
     ) {
-        Text(text.trim(), style = Theme[typography][bodySmall], color = Theme[colors][textSecondary])
+        MarkdownText(text.trim(), streaming = streaming, textStyle = Theme[typography][bodySmall].copy(color = Theme[colors][textSecondary]))
     }
 }
 
@@ -2415,17 +2713,7 @@ internal fun toolDone(tool: ToolActivity): LiveStep {
 /** The status of a turn started by a bot-to-bot delivery finishing (tools/bot_mode_dm.py's runner). */
 private val BOT_DELIVERY_STATUS = Regex("""Background Process Finished:.*(?:bot_mode_dm\.py|--run-delivery)""", RegexOption.IGNORE_CASE)
 
-/** "terminal" reads as "Running a command", and so on; other tools as "Using <name>". */
-private fun String.toolVerb(): String = when (this) {
-    "terminal", "shell", "bash" -> "Running a command"
-    "read_file", "file_read" -> "Reading a file"
-    "write_file", "patch", "edit_file" -> "Editing a file"
-    "web_search", "search" -> "Searching the web"
-    "web_extract", "browser", "fetch" -> "Reading a web page"
-    "delegate_task" -> "Working with subagents"
-    MESSAGE_AGENT_TOOL -> "Messaging another bot"
-    else -> "Using ${replace('_', ' ')}"
-}
+private fun String.toolVerb(): String = toolInProgress(this)
 
 /** A passing message, like where a file was saved. */
 @Composable

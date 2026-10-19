@@ -27,6 +27,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
@@ -38,6 +39,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -71,6 +73,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.composables.icons.lucide.Activity
+import com.composables.icons.lucide.BellRing
+import com.composables.icons.lucide.PanelLeft
+import com.composables.icons.lucide.PanelTop
+import com.composables.icons.lucide.Vibrate
 import com.composables.icons.lucide.ArrowLeftRight
 import com.composables.icons.lucide.Brain
 import com.composables.icons.lucide.Cat
@@ -78,10 +84,12 @@ import com.composables.icons.lucide.Clock
 import com.composables.icons.lucide.Gauge
 import com.composables.icons.lucide.Globe
 import com.composables.icons.lucide.Image
+import com.composables.icons.lucide.LayoutGrid
 import com.composables.icons.lucide.Lock
 import com.composables.icons.lucide.LogOut
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.MessageCircle
+import com.composables.icons.lucide.MessagesSquare
 import com.composables.icons.lucide.Moon
 import com.composables.icons.lucide.RefreshCw
 import com.composables.icons.lucide.Send
@@ -95,6 +103,7 @@ import com.composeunstyled.UnstyledIcon
 import com.composeunstyled.theme.Theme
 import com.composeunstyled.theme.rememberColoredIndication
 import dev.hermeskotlin.core.gateway.SavedGateway
+import dev.hermeskotlin.core.phone.enabledPhoneTools
 import dev.hermeskotlin.core.push.PushStatus
 import dev.hermeskotlin.core.settings.AppSettings
 import dev.hermeskotlin.core.settings.RunningSend
@@ -176,8 +185,12 @@ fun SettingsScreen(
         onError = { wallpaperError = it },
     )
     var checkOpen by remember { mutableStateOf(false) }
+    var phoneToolsOpen by remember { mutableStateOf(false) }
+    var appIconOpen by remember { mutableStateOf(false) }
+    // Read again when the App icon page closes, so its row names the icon just applied.
+    val appIcons = key(appIconOpen) { rememberAppIcons() }
     LaunchedEffect(gateway) { viewModel.bind(gateway) }
-    PlatformBackHandler(enabled = !checkOpen, onBack = onBack)
+    PlatformBackHandler(enabled = !checkOpen && !phoneToolsOpen && !appIconOpen, onBack = onBack)
     SettingsView(
         settings, info, gateway.url, viewModel::update, onBack, onSignOut, onOpenGateways,
         gatewayName = gateway.label,
@@ -189,6 +202,7 @@ fun SettingsScreen(
         pushTest = pushTest,
         onPushAnywhere = viewModel::setPushAnywhere,
         onPushTest = viewModel::sendPushTest,
+        onPushUpdate = viewModel::updatePushPlugin,
         wallpaper = rememberWallpaperBitmap(wallpaper),
         hasWallpaper = wallpaper != null,
         wallpaperError = wallpaperError,
@@ -197,7 +211,12 @@ fun SettingsScreen(
             wallpaperError = null
             viewModel.removeWallpaper()
         },
+        onOpenPhoneTools = { phoneToolsOpen = true },
+        appIcon = appIcons.current,
+        onOpenAppIcon = { appIconOpen = true },
     )
+    if (phoneToolsOpen) PhoneToolsScreen(onBack = { phoneToolsOpen = false })
+    if (appIconOpen) AppIconScreen(onBack = { appIconOpen = false })
     ConnectionCheckSheet(
         visible = checkOpen,
         results = check.results,
@@ -266,12 +285,16 @@ internal fun SettingsView(
     pushTest: Boolean? = null,
     onPushAnywhere: (Boolean) -> Unit = {},
     onPushTest: () -> Unit = {},
+    onPushUpdate: () -> Unit = {},
     /** The chat background, once decoded. */
     wallpaper: ImageBitmap? = null,
     hasWallpaper: Boolean = wallpaper != null,
     wallpaperError: String? = null,
     onChooseWallpaper: () -> Unit = {},
     onRemoveWallpaper: () -> Unit = {},
+    onOpenPhoneTools: () -> Unit = {},
+    appIcon: AppIcon = AppIcon.Blue,
+    onOpenAppIcon: () -> Unit = {},
 ) {
     Box(
         Modifier
@@ -312,6 +335,8 @@ internal fun SettingsView(
                             onSelect = { palette -> onUpdate { it.copy(accent = palette.name) } },
                         )
                     }
+                    Divider()
+                    NavRow(title = "App icon", detail = appIcon.label, icon = Lucide.LayoutGrid, onClick = onOpenAppIcon)
                     Divider()
                     SwitchRow(
                         title = "Pure black",
@@ -368,6 +393,13 @@ internal fun SettingsView(
                             )
                         }
                     }
+                    Divider()
+                    SwitchRow(
+                        title = "Projects as a list",
+                        detail = "Show the chat list's projects as one button that opens a list, instead of a row of chips that scrolls sideways.",
+                        checked = settings.projectsAsDropdown,
+                        onCheckedChange = { on -> onUpdate { it.copy(projectsAsDropdown = on) } },
+                    )
                 }
 
                 Section("Chat") {
@@ -430,6 +462,14 @@ internal fun SettingsView(
                         onCheckedChange = { on -> onUpdate { it.copy(showPet = on) } },
                         icon = Lucide.Cat,
                     )
+                    Divider()
+                    SwitchRow(
+                        title = "Show link previews",
+                        detail = "A card for each web link in a finished reply. Herald opens the linked pages and their pictures itself, without your gateway's cookies.",
+                        checked = settings.showLinkPreviews,
+                        onCheckedChange = { on -> onUpdate { it.copy(showLinkPreviews = on) } },
+                        icon = Lucide.Globe,
+                    )
                 }
 
                 Section("Voice") {
@@ -468,6 +508,17 @@ internal fun SettingsView(
                 }
 
                 Section("Notifications") {
+                    var installAsked by remember { mutableStateOf(false) }
+                    PluginInstallDialog(
+                        visible = installAsked,
+                        feature = "Notifications anywhere",
+                        what = "It watches your bots' chats and sends each new reply to this phone, end-to-end " +
+                            "encrypted through ntfy.sh.",
+                        onDismiss = { installAsked = false },
+                    ) {
+                        installAsked = false
+                        onPushAnywhere(true)
+                    }
                     SwitchRow(
                         title = "Approvals and questions",
                         detail = "When the agent waits on you. Answer right from the notification.",
@@ -485,12 +536,54 @@ internal fun SettingsView(
                     )
                     Divider()
                     SwitchRow(
+                        title = "Notify for other chats while Herald is open",
+                        detail = "Replies and requests in chats other than the one on screen notify even while you're in Herald.",
+                        checked = settings.notifyOtherChatsInApp,
+                        onCheckedChange = { on -> onUpdate { it.copy(notifyOtherChatsInApp = on) } },
+                        icon = Lucide.BellRing,
+                    )
+                    Divider()
+                    SwitchRow(
+                        title = "Alerts for other chats",
+                        detail = "While you're in a chat, a dot on Sessions when another chat replies or waits on you. " +
+                            "Long-press Sessions for the next one.",
+                        checked = settings.otherChatsAlerts,
+                        onCheckedChange = { on -> onUpdate { it.copy(otherChatsAlerts = on) } },
+                        icon = Lucide.PanelLeft,
+                    )
+                    // What the alerts do, only while they're on.
+                    if (settings.otherChatsAlerts) {
+                        Divider()
+                        SwitchRow(
+                            title = "Banner for other chats",
+                            detail = "A card over the chat when another chat replies or waits on you, to open it from there.",
+                            checked = settings.otherChatsBanner,
+                            onCheckedChange = { on -> onUpdate { it.copy(otherChatsBanner = on) } },
+                            icon = Lucide.PanelTop,
+                        )
+                        Divider()
+                        SwitchRow(
+                            title = "Vibrate when another chat waits",
+                            detail = "A short buzz when another chat starts waiting on your approval or answer.",
+                            checked = settings.otherChatsVibrate,
+                            onCheckedChange = { on -> onUpdate { it.copy(otherChatsVibrate = on) } },
+                            icon = Lucide.Vibrate,
+                        )
+                    }
+                    Divider()
+                    SwitchRow(
                         title = "Notifications anywhere",
                         detail = pushDetail(settings.pushAnywhere, push),
                         checked = settings.pushAnywhere,
-                        onCheckedChange = onPushAnywhere,
+                        // On installs code on the gateway: said first, done only once the user agrees.
+                        onCheckedChange = { on -> if (on) installAsked = true else onPushAnywhere(false) },
                         icon = Lucide.Globe,
                     )
+                    val pushUpdate = push.update
+                    if (settings.pushAnywhere && pushUpdate != null) {
+                        Divider()
+                        PluginUpdateRow(pushUpdate, onPushUpdate)
+                    }
                     if (settings.pushAnywhere && push.state == PushStatus.State.On) {
                         Divider()
                         ActionRow(
@@ -503,6 +596,15 @@ internal fun SettingsView(
                             onPushTest,
                         )
                     }
+                }
+
+                Section("Phone") {
+                    NavRow(
+                        title = "Phone tools",
+                        detail = phoneToolsSummary(settings),
+                        icon = Lucide.Smartphone,
+                        onClick = onOpenPhoneTools,
+                    )
                 }
 
                 Section("Privacy") {
@@ -542,9 +644,31 @@ internal fun SettingsView(
                     UpdateBanner(Modifier.padding(horizontal = 12.dp, vertical = 8.dp))
                     Divider()
                     InfoRow("Gateway", info.version?.let { "Hermes $it" } ?: "Checking…")
+                    Divider()
+                    val uriHandler = LocalUriHandler.current
+                    NavRow(
+                        title = "Join the Discord",
+                        detail = "Get help, report bugs, suggest features and hear about new releases.",
+                        icon = Lucide.MessagesSquare,
+                        onClick = { uriHandler.openUri(DISCORD_INVITE) },
+                    )
                 }
             }
         }
+    }
+}
+
+/** The Herald community server; the invite never expires. */
+private const val DISCORD_INVITE = "https://discord.gg/wCtyvQ3KcM"
+
+/** The Phone tools row's line: off, or how many tools the agent may use. */
+private fun phoneToolsSummary(settings: AppSettings): String {
+    val count = settings.enabledPhoneTools().size
+    return when {
+        !settings.phoneTools -> "Off. Let the agent use this phone, each tool only once you turn it on."
+        count == 0 -> "On, but no tool is turned on yet."
+        count == 1 -> "1 tool on."
+        else -> "$count tools on."
     }
 }
 
@@ -558,6 +682,9 @@ private fun pushDetail(on: Boolean, push: PushStatus): String {
         PushStatus.State.On -> push.detail ?: "On. Bot messages come end-to-end encrypted through ntfy.sh; it only sees scrambled data."
         PushStatus.State.Working -> push.detail ?: "Setting up with the gateway…"
         PushStatus.State.NotInstalled -> "The gateway doesn't have the herald-push plugin. Turn this off and on to install it."
+        PushStatus.State.Outdated -> push.update?.let {
+            "The gateway's herald-push plugin is ${it.installed}; this needs ${it.available}. Update it below."
+        } ?: "The gateway's herald-push plugin is too old."
         PushStatus.State.Failed -> "Couldn't set up: ${push.detail ?: "unknown error"}"
         PushStatus.State.Unknown, PushStatus.State.Off -> "On. Checks with the gateway the next time Herald reaches it."
     }
@@ -631,7 +758,7 @@ private fun PillButton(caption: String, icon: ImageVector, onClick: () -> Unit, 
 }
 
 @Composable
-private fun Section(title: String, content: @Composable ColumnScope.() -> Unit) {
+internal fun Section(title: String, content: @Composable ColumnScope.() -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(
             title.uppercase(),
@@ -648,7 +775,7 @@ private fun Section(title: String, content: @Composable ColumnScope.() -> Unit) 
 }
 
 @Composable
-private fun Divider() {
+internal fun Divider() {
     Box(Modifier.padding(horizontal = 14.dp).fillMaxWidth().height(1.dp).background(Theme[colors][stroke]))
 }
 
@@ -666,7 +793,7 @@ private fun Field(title: String, detail: String? = null, control: @Composable ()
 
 /** A setting that's on or off: the whole row toggles. An [icon] sits on a small tile before the title. */
 @Composable
-private fun SwitchRow(title: String, detail: String?, checked: Boolean, onCheckedChange: (Boolean) -> Unit, icon: ImageVector? = null) {
+internal fun SwitchRow(title: String, detail: String?, checked: Boolean, onCheckedChange: (Boolean) -> Unit, icon: ImageVector? = null) {
     Row(
         Modifier
             .fillMaxWidth()
@@ -685,7 +812,7 @@ private fun SwitchRow(title: String, detail: String?, checked: Boolean, onChecke
 }
 
 @Composable
-private fun IconTile(icon: ImageVector) {
+internal fun IconTile(icon: ImageVector) {
     Box(
         Modifier.size(32.dp).background(Theme[colors][surface2], RoundedCornerShape(Theme[radii][radiusSmall])),
         contentAlignment = Alignment.Center,
@@ -813,7 +940,7 @@ private fun TextSizeSlider(selected: TextSize, onSelect: (TextSize) -> Unit) {
 private val SLIDER_THUMB = 22.dp
 
 @Composable
-private fun InfoRow(title: String, value: String) {
+internal fun InfoRow(title: String, value: String) {
     Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Text(title, style = Theme[typography][body], color = Theme[colors][text])
         Text(value, style = Theme[typography][bodySmall], color = Theme[colors][textTertiary], maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -821,7 +948,7 @@ private fun InfoRow(title: String, value: String) {
 }
 
 @Composable
-private fun ActionRow(title: String, icon: ImageVector, onClick: () -> Unit) {
+internal fun ActionRow(title: String, icon: ImageVector, onClick: () -> Unit) {
     Row(
         Modifier.fillMaxWidth().heightIn(min = 56.dp).clickable(onClick = onClick).padding(horizontal = 14.dp, vertical = 8.dp),
         horizontalArrangement = Arrangement.spacedBy(14.dp),

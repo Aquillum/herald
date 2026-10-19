@@ -21,6 +21,7 @@ kotlin {
         commonMain.dependencies {
             api(libs.kotlinx.coroutines.core)
             api(libs.kotlinx.serialization.json)
+            api(projects.shared.wearlink)
             implementation(libs.ktor.client.core)
             implementation(libs.ktor.client.content.negotiation)
             implementation(libs.ktor.client.websockets)
@@ -30,6 +31,8 @@ kotlin {
         }
         androidMain.dependencies {
             implementation(libs.ktor.client.okhttp)
+            implementation(libs.jsoup)
+            implementation(libs.markdown.parser)
             implementation(libs.koin.android)
             implementation(libs.androidx.core.ktx)
             implementation(libs.webrtc.android)

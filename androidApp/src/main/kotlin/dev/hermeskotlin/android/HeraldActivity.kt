@@ -22,11 +22,16 @@ import androidx.core.content.edit
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.lifecycleScope
 import androidx.core.content.pm.ShortcutManagerCompat
+import dev.hermeskotlin.android.notify.BotNotifier
 import dev.hermeskotlin.android.notify.BotShortcuts
 import dev.hermeskotlin.android.notify.ChatNotifications
+import dev.hermeskotlin.android.phone.PhoneConfirmations
+import dev.hermeskotlin.ui.settings.AppIconRestart
+import dev.hermeskotlin.ui.settings.PhoneQuestion
 import dev.hermeskotlin.core.chat.AppLink
 import dev.hermeskotlin.core.chat.ChatHost
 import dev.hermeskotlin.core.chat.ChatLinks
+import dev.hermeskotlin.core.inbox.InboxLinks
 import dev.hermeskotlin.core.rooms.RoomLinks
 import dev.hermeskotlin.core.chat.ComposeDraft
 import dev.hermeskotlin.core.chat.SharedContent
@@ -37,6 +42,8 @@ import dev.hermeskotlin.ui.App
 import dev.hermeskotlin.ui.chat.readAttachments
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.filterNotNull
@@ -46,8 +53,12 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import org.koin.android.ext.android.inject
 
-// A FragmentActivity because BiometricPrompt (App lock) needs one.
-class MainActivity : FragmentActivity() {
+/**
+ * The app. The launcher doesn't start it by this name but through one alias per app icon (AppIcons), and the
+ * default icon's alias is called MainActivity, this activity's old name, so home-screen icons from before stay.
+ * A FragmentActivity because BiometricPrompt (App lock) needs one.
+ */
+class HeraldActivity : FragmentActivity() {
 
     // The last theme shown, read synchronously so the window behind the first frame already matches it.
     private val windowPrefs by lazy { getSharedPreferences("window", MODE_PRIVATE) }
@@ -56,8 +67,11 @@ class MainActivity : FragmentActivity() {
     private val connection: GatewayConnection by inject()
     private val links: ChatLinks by inject()
     private val roomLinks: RoomLinks by inject()
+    private val inboxLinks: InboxLinks by inject()
     private val settings: SettingsStore by inject()
     private val appScope: CoroutineScope by inject()
+    private val bots: BotNotifier by inject()
+    private val notifications: ChatNotifications by inject()
     private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
 
     private val app get() = application as HermesApplication
@@ -67,21 +81,37 @@ class MainActivity : FragmentActivity() {
     /** Set when the lock closes, so the unlock prompt shows by itself once, not again after a cancel. */
     private var promptOnResume = false
 
+    /** Between onResume and onPause: what the user is looking at. */
+    private val resumed = MutableStateFlow(false)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         if (windowPrefs.contains(KEY_DARK)) applyWindowTheme(windowPrefs.getBoolean(KEY_DARK, false))
         // The stored setting is read asynchronously; this copy decides the very first frame.
         val lockOn = windowPrefs.getBoolean(KEY_APP_LOCK, false)
-        appLock.onLaunch(lockOn, fresh = savedInstanceState == null)
+        // Switching the app icon restarts Herald in a new task: that's no fresh open, so it stays unlocked.
+        appLock.onLaunch(lockOn, fresh = savedInstanceState == null && !AppIconRestart.take())
         lockGate.hideFromRecents(lockOn)
         promptOnResume = appLock.locked.value
         followAppLockSetting()
         askForNotificationsOnFirstTurn()
         if (savedInstanceState == null) handleIntent(intent)
         val browser = InAppBrowser(this) { windowPrefs.getBoolean(KEY_DARK, false) }
+        askPhoneQuestionsInApp()
+        bots.republishIfIconChanged()
         setContent {
             val locked by appLock.locked.collectAsState()
+            val asked by PhoneConfirmations.asking.collectAsState()
+            val question = asked.firstOrNull()?.let { q ->
+                PhoneQuestion(
+                    key = q.key,
+                    title = q.title,
+                    what = q.what,
+                    allow = { PhoneConfirmations.allow(q.key, this) },
+                    deny = { PhoneConfirmations.deny(q.key) },
+                )
+            }
             CompositionLocalProvider(LocalUriHandler provides remember { browser }) {
                 App(
                     appVersion = BuildConfig.VERSION_NAME,
@@ -92,6 +122,7 @@ class MainActivity : FragmentActivity() {
                     },
                     locked = locked,
                     onUnlock = lockGate::ask,
+                    phoneQuestion = question,
                 )
             }
         }
@@ -105,6 +136,11 @@ class MainActivity : FragmentActivity() {
     /** A link, shortcut, notification or share, opened now or once App lock lets the user in. */
     private fun handleIntent(intent: Intent?) {
         intent ?: return
+        // A call's Answer: it stops ringing at once, App lock or not; the chat it names opens below.
+        intent.getStringExtra(ChatNotifications.EXTRA_ANSWERED_CALL)?.let {
+            notifications.answered(it)
+            intent.removeExtra(ChatNotifications.EXTRA_ANSWERED_CALL)
+        }
         if (appLock.locked.value) {
             app.heldIntent = intent
             return
@@ -137,7 +173,9 @@ class MainActivity : FragmentActivity() {
         val sessionId = intent.getStringExtra(ChatNotifications.EXTRA_OPEN_SESSION)
         val title = intent.getStringExtra(ChatNotifications.EXTRA_OPEN_TITLE)
         val link = intent.data?.let { AppLink.parse(it.toString()) }
+        val inbox = intent.getStringExtra(ChatNotifications.EXTRA_OPEN_INBOX)
         when {
+            inbox != null -> inboxLinks.open(inbox)
             room != null -> roomLinks.open(room, title)
             bot != null -> links.openBot(bot, title, sessionId)
             sessionId != null -> links.open(sessionId, title)
@@ -148,6 +186,7 @@ class MainActivity : FragmentActivity() {
         intent.removeExtra(ChatNotifications.EXTRA_OPEN_SESSION)
         intent.removeExtra(ChatNotifications.EXTRA_OPEN_BOT)
         intent.removeExtra(ChatNotifications.EXTRA_OPEN_ROOM)
+        intent.removeExtra(ChatNotifications.EXTRA_OPEN_INBOX)
         intent.data = null
     }
 
@@ -188,9 +227,25 @@ class MainActivity : FragmentActivity() {
 
     override fun onResume() {
         super.onResume()
+        resumed.value = true
+        // In front, so the user sees the chats: a call ringing for an answer is answered by looking.
+        notifications.hangUp()
         if (promptOnResume) {
             promptOnResume = false
             lockGate.ask()
+        }
+    }
+
+    override fun onPause() {
+        super.onPause()
+        resumed.value = false
+    }
+
+    /** Phone tools ask in a dialog here while the app is in front and unlocked, else in a notification. */
+    private fun askPhoneQuestionsInApp() {
+        lifecycleScope.launch {
+            combine(resumed, appLock.locked) { front, locked -> front && !locked }
+                .collect { PhoneConfirmations.inApp.value = it }
         }
     }
 
