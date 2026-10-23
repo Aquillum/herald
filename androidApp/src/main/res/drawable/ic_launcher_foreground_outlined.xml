@@ -11,11 +11,12 @@
     <group android:translateY="-4">
         <group>
             <clip-path android:pathData="@string/launcher_summit_sun_clip" />
+            <!-- Stroke first, fill over it: only the outer half of the outline shows, as on the mountain. -->
             <path
-                android:fillColor="#FFFFFF"
                 android:strokeColor="@color/launcher_mark_outline"
                 android:strokeWidth="5"
                 android:pathData="@string/launcher_summit_sun" />
+            <path android:fillColor="#FFFFFF" android:pathData="@string/launcher_summit_sun" />
         </group>
         <path
             android:strokeColor="@color/launcher_mark_outline"
