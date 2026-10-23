@@ -846,6 +846,7 @@ internal fun SessionsSidebarSample(
     ) {
         Column(Modifier.fillMaxSize()) {
             MainHeader(gatewayLabel = "homelab", connection = null, onAccount = {}, onSettings = {}, onSearch = {})
+            RenameBanner(Modifier.padding(start = 12.dp, end = 12.dp, bottom = 8.dp))
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 val index = remember(projects) { ProjectIndex(projects) }
                 val sections = threadSections(threads, sessions, sessions, selectedProject, index)
