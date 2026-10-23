@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- The app icons the user can pick in Settings (AppIcons): the summit at dawn in each accent, and the patterns. -->
+<!-- The app icons the user can pick in Settings (AppIcons): the summit at dawn in each accent, and three of them with a pattern in the sky. -->
 <resources>
     <!--
         The summit's colors per icon: the night sky (top, bottom), the sun (top, bottom), the lit face, the shaded
@@ -65,18 +65,13 @@
     <color name="launcher_teal_shade_bottom">#08495C</color>
     <color name="launcher_teal_snow_shade">#CDEAF1</color>
 
-    <!-- The patterns: a background, its shapes' fill and their outline. -->
-    <color name="launcher_hearts">#F0244A</color>
-    <color name="launcher_hearts_shape">#FF5C78</color>
-    <color name="launcher_hearts_line">#2A0010</color>
-    <color name="launcher_marks">#9B4DEB</color>
-    <color name="launcher_marks_shape">#C08CFF</color>
-    <color name="launcher_marks_line">#1E0636</color>
-    <color name="launcher_bubbles">#0F9E94</color>
-    <color name="launcher_bubbles_shape">#45D6CA</color>
-    <color name="launcher_bubbles_line">#00302C</color>
-    <!-- The white mark's outline over a pattern. -->
-    <color name="launcher_mark_outline">#14001E</color>
+    <!-- The patterns: faint shapes in a theme's sky (its fill and its edge, both see-through), under its summit. -->
+    <color name="launcher_hearts_shape">#24FF7AC0</color>
+    <color name="launcher_hearts_line">#4DFFA3D6</color>
+    <color name="launcher_marks_shape">#26A27BFF</color>
+    <color name="launcher_marks_line">#4DC6AEFF</color>
+    <color name="launcher_bubbles_shape">#243FC6DE</color>
+    <color name="launcher_bubbles_line">#4D8FE3F2</color>
 
     <!--
         The summit's shapes in the 108dp adaptive grid; the launcher shows 18..90 of it. The mountain rises past the
@@ -90,10 +85,10 @@
     <string name="launcher_summit_shade" translatable="false">M58,41.7L96.4,108L60,108L60,90L56,78L60,64L55,52Z</string>
     <string name="launcher_summit_snow" translatable="false">M45.2,50L51,40Q54,35 57,40L58,41.7L55,52L52,49L48.5,53Z</string>
     <string name="launcher_summit_snow_shade" translatable="false">M58,41.7L62.8,50L60,48.6L57.5,52.5L55,52Z</string>
-    <!-- One color only (themed icons, the notification, the patterns): the snowcap and the body part along the snow line. -->
+    <!-- One color only (themed icons, the notification): the snowcap and the body part along the snow line. -->
     <string name="launcher_summit_cap" translatable="false">M45.2,50L51,40Q54,35 57,40L62.8,50L60,48.6L57.5,52.5L55,52L52,49L48.5,53Z</string>
     <string name="launcher_summit_body" translatable="false">M11.6,108L44.04,52L48.5,55.2L52,51.2L55,54.2L57.5,54.7L60,50.8L63.96,52L96.4,108Z</string>
-    <!-- The body cut off at y 82, for a mark that has to stand inside the icon (patterns, the notification). -->
+    <!-- The body cut off at y 82, for a mark that has to stand inside the icon (the notification). -->
     <string name="launcher_summit_badge_body" translatable="false">M26.64,82L44.04,52L48.5,55.2L52,51.2L55,54.2L57.5,54.7L60,50.8L63.96,52L81.36,82Z</string>
     <!-- Right of the right slope, 2.3 out: clips the one-color sun so it doesn't merge into the mountain. -->
     <string name="launcher_summit_sun_clip" translatable="false">M36.5,0L99.1,108L108,108L108,0Z</string>
