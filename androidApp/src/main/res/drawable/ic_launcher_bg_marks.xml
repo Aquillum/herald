@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-    The Marks app icon's background: small outlined Herald marks packed over violet, on the Hearts grid.
+    The Marks app icon's background: small outlined peaks packed over violet, on the Hearts grid.
     Each mark is stroked first and filled over, so only its outer edge shows a line.
 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
