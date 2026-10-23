@@ -302,7 +302,7 @@ fun HeraldPreview(scene: PreviewScene, dark: Boolean = true, accent: String = DE
                         ProjectActionsSheet(site, onDismiss = {}, onRename = {}, onDelete = {}, onSave = {})
                     } else {
                         NewProjectDialog(
-                            ProjectDraft(name = "Herald", folder = "/home/you/projects/herald"),
+                            ProjectDraft(name = "Kyllene", folder = "/home/you/projects/kyllene"),
                             busy = false,
                             error = null,
                             onDismiss = {},

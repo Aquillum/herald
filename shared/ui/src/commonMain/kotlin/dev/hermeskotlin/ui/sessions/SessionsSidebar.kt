@@ -1008,7 +1008,7 @@ private fun MainHeader(
                 verticalArrangement = Arrangement.Center,
             ) {
                 Text(
-                    "Herald",
+                    "Kyllene",
                     style = Theme[typography][heading].copy(fontSize = 17.sp, lineHeight = 21.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-0.02).em),
                     color = Theme[colors][text],
                     maxLines = 1,
