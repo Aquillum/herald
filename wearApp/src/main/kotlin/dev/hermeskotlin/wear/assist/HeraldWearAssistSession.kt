@@ -27,6 +27,7 @@ import dev.hermeskotlin.wear.AssistPanel
 import dev.hermeskotlin.wear.HeraldWatch
 import dev.hermeskotlin.wear.Listening
 import dev.hermeskotlin.wear.MainActivity
+import dev.hermeskotlin.wear.WatchLink
 import dev.hermeskotlin.wear.WatchRecorder
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -120,13 +121,19 @@ class HeraldWearAssistSession(context: Context) :
     private fun listen() {
         if (recording?.isActive == true) return
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            listening.value = Listening(error = "Tap to allow the microphone in Herald.")
+            listening.value = Listening(error = "Tap to allow the microphone in Kyllene.")
             return
         }
         // Nothing of the last reply may play while the microphone is open.
         app.link.quiet()
         listening.value = Listening(recording = true)
         recording = work.launch {
+            // As the talk screen does: the phone's profile first, and the ask only goes to the chat it was made in.
+            if (!app.link.synchronizeProfile()) {
+                listening.value = Listening(error = WatchLink.NO_HERALD)
+                return@launch
+            }
+            val generation = app.link.profileReset.value
             val audio = try {
                 recorder.record { level -> listening.value = listening.value.copy(level = level) }
             } catch (e: CancellationException) {
@@ -139,6 +146,8 @@ class HeraldWearAssistSession(context: Context) :
             }
             if (audio == null) {
                 listening.value = Listening(error = "I didn't hear anything.")
+            } else if (generation != app.link.profileReset.value) {
+                listening.value = Listening(error = "Phone profile changed. Please try again.")
             } else {
                 app.link.ask(null, audio, WatchRecorder.MIME_TYPE)
             }

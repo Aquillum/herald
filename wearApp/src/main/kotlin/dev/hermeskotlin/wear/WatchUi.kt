@@ -813,7 +813,7 @@ private fun SettingsScreen(link: WatchLink, store: WatchStore) {
                         label = { Text("Assistant", style = geist(14, FontWeight.Medium), maxLines = 1, overflow = TextOverflow.Ellipsis) },
                         secondaryLabel = {
                             Text(
-                                if (isAssistant) "Herald answers the button" else "Set Herald as assistant",
+                                if (isAssistant) "Kyllene answers the button" else "Set Kyllene as assistant",
                                 style = geist(12, color = Text2),
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
