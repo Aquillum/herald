@@ -158,6 +158,15 @@
             android:theme="@android:style/Theme.NoDisplay"
             tools:ignore="CustomSplashScreen" />
 
+        <!-- Shows the microphone prompt for the assistant's session, which can't; invisible and kept out of Herald's task.
+             Not noHistory: Wear opens the prompt in a task of its own, which stops this one before the answer. -->
+        <activity
+            android:name=".assist.MicrophonePermissionActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
         <!-- Android only accepts an assistant that names a recognizer of its own; this one turns other apps away. -->
         <service
             android:name=".assist.HeraldWearRecognitionService"

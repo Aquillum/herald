@@ -14,7 +14,27 @@ import android.speech.SpeechRecognizer
  * Nothing runs here — Android keeps this service bound while Herald is the assistant, and it has nothing to
  * listen for (hotwords need a preinstalled assistant; `MANAGE_HOTWORD_DETECTION` is internal on Wear OS).
  */
-class HeraldWearAssistService : VoiceInteractionService()
+class HeraldWearAssistService : VoiceInteractionService() {
+
+    override fun onReady() {
+        super.onReady()
+        running = this
+    }
+
+    override fun onShutdown() {
+        if (running === this) running = null
+        super.onShutdown()
+    }
+
+    companion object {
+        private var running: HeraldWearAssistService? = null
+
+        /** Shows the session again, listening, e.g. once the microphone was allowed. */
+        fun reopen() {
+            running?.showSession(Bundle(), 0)
+        }
+    }
+}
 
 class HeraldWearAssistSessionService : VoiceInteractionSessionService() {
     override fun onNewSession(args: Bundle?): VoiceInteractionSession = HeraldWearAssistSession(this)

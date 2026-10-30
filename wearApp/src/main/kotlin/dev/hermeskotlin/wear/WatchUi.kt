@@ -512,6 +512,7 @@ internal fun callCaption(call: WatchCallState): String = when (call.stage) {
 /** What's going on, under the orb. */
 private fun caption(mood: OrbMood, turn: WatchTurn?, mic: Listening, phone: PhoneState): String? = when {
     mic.recording -> "Listening… tap when done"
+    mic.waiting -> "Checking your phone…"
     mood == OrbMood.Speaking -> "Tap to stop"
     turn != null && turn.update.phase == ReplyPhase.Failed -> turn.update.error ?: "Something went wrong."
     turn != null && turn.running -> activityLine(turn.update.phase, turn.update.activity)
@@ -710,7 +711,8 @@ private fun ChatsScreen(link: WatchLink, store: WatchStore, onPicked: () -> Unit
 /**
  * The assistant's screen, when Android calls Herald through the assistant role: the orb and what it's doing,
  * nothing else. The talk screen in [MainActivity] keeps the chats and the settings; this one is a glance over
- * the watch face, so it closes when the user swipes it away.
+ * the watch face, so it closes when the user swipes it away. Without [showsLast] (a locked watch) it shows no
+ * turn it didn't ask itself: the session window is shown over the lock screen.
  */
 @Composable
 fun AssistPanel(
@@ -718,17 +720,20 @@ fun AssistPanel(
     store: WatchStore,
     speech: SpeechOut,
     listening: Listening,
+    showsLast: Boolean,
     onOrb: () -> Unit,
-    onOpen: () -> Unit,
+    onNotice: () -> Unit,
 ) {
     val accent by store.accent.collectAsState()
-    val turn by link.turn.collectAsState()
+    val lastTurn by link.turn.collectAsState()
+    val turn = lastTurn.takeIf { showsLast }
     val phone by link.phone.collectAsState()
     val chat by store.chat.collectAsState()
     val speaking by speech.speaking.collectAsState()
     MaterialTheme(colorScheme = watchColors(accent)) {
         val mood = when {
             listening.recording -> OrbMood.Listening
+            listening.waiting -> OrbMood.Waiting
             turn?.update?.phase == ReplyPhase.WaitingOnPhone -> OrbMood.Waiting
             turn?.running == true -> OrbMood.Working
             speaking -> OrbMood.Speaking
@@ -757,12 +762,18 @@ fun AssistPanel(
                         role = Role.Button,
                         onClick = onOrb,
                     )
-                    .semantics { contentDescription = if (listening.recording) "Done talking" else "Talk to Hermes" },
+                    .semantics {
+                        contentDescription = when {
+                            listening.recording -> "Done talking"
+                            listening.waiting -> "Cancel"
+                            else -> "Talk to Hermes"
+                        }
+                    },
             )
             Spacer(Modifier.height(6.dp))
             Caption(caption(mood, turn, listening, phone), mood)
-            listening.error?.let { Notice(it, onClick = onOpen) }
-            if (!listening.recording) {
+            listening.error?.let { Notice(it, onClick = onNotice) }
+            if (!listening.recording && !listening.waiting) {
                 turn?.said?.let { Said(it) }
                 turn?.update?.text?.takeIf { it.isNotBlank() }?.let { Reply(it) }
             }

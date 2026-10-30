@@ -1,6 +1,7 @@
 package dev.hermeskotlin.wear.assist
 
 import android.Manifest
+import android.app.KeyguardManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -26,10 +27,10 @@ import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import dev.hermeskotlin.wear.AssistPanel
 import dev.hermeskotlin.wear.HeraldWatch
 import dev.hermeskotlin.wear.Listening
-import dev.hermeskotlin.wear.MainActivity
+import dev.hermeskotlin.wear.PROFILE_CHANGED
 import dev.hermeskotlin.wear.WatchLink
 import dev.hermeskotlin.wear.WatchRecorder
-import kotlinx.coroutines.CancellationException
+import dev.hermeskotlin.wear.recordAsk
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -61,6 +62,9 @@ class HeraldWearAssistSession(context: Context) :
     private val listening = MutableStateFlow(Listening())
     private var recording: Job? = null
 
+    /** Whether the last chat may show: not over the lock screen, unless this session asked it. */
+    private val showsLast = MutableStateFlow(true)
+
     override val lifecycle: Lifecycle get() = lifecycleRegistry
     override val savedStateRegistry: SavedStateRegistry get() = savedState.savedStateRegistry
     override val viewModelStore: ViewModelStore get() = store
@@ -69,6 +73,19 @@ class HeraldWearAssistSession(context: Context) :
         super.onCreate()
         savedState.performRestore(null)
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_CREATE)
+        // As on the talk screen, a profile change on the phone takes the recording with it. Not while the phone is
+        // still being checked: that check's own first reset would end every first ask.
+        work.launch {
+            var previous = app.link.profileReset.value
+            app.link.profileReset.collect { generation ->
+                if (generation == previous) return@collect
+                previous = generation
+                if (listening.value.recording) {
+                    recording?.cancel()
+                    listening.value = Listening(error = PROFILE_CHANGED)
+                }
+            }
+        }
     }
 
     override fun onCreateContentView(): View = ComposeView(context).apply {
@@ -78,19 +95,22 @@ class HeraldWearAssistSession(context: Context) :
         setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnLifecycleDestroyed(this@HeraldWearAssistSession))
         setContent {
             val current by listening.collectAsState()
+            val showLast by showsLast.collectAsState()
             AssistPanel(
                 link = app.link,
                 store = app.store,
                 speech = app.speech,
                 listening = current,
+                showsLast = showLast,
                 onOrb = ::orb,
-                onOpen = ::openHerald,
+                onNotice = ::notice,
             )
         }
     }
 
     override fun onShow(args: Bundle?, showFlags: Int) {
         super.onShow(args, showFlags)
+        showsLast.value = context.getSystemService(KeyguardManager::class.java)?.isKeyguardLocked != true
         // The screen stays on while Herald listens and answers, as on the talk screen.
         setKeepAwake(true)
         // The session window is up: listen straight away, the way the tile does.
@@ -113,42 +133,39 @@ class HeraldWearAssistSession(context: Context) :
         super.onDestroy()
     }
 
-    /** The orb: done talking, or talk again once the last recording ended. */
+    /** The orb: done talking, never mind while the phone is checked, or talk again once the last recording ended. */
     private fun orb() {
-        if (listening.value.recording) recorder.finish() else listen()
+        when {
+            listening.value.recording -> recorder.finish()
+            listening.value.waiting -> stopRecording()
+            else -> listen()
+        }
     }
 
+    /** A notice: the microphone's is asked for; any other is only dismissed. */
+    private fun notice() {
+        if (listening.value.error == NEEDS_MICROPHONE) askForMicrophone() else listening.value = Listening()
+    }
+
+    @Suppress("MissingPermission") // Checked first.
     private fun listen() {
         if (recording?.isActive == true) return
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            listening.value = Listening(error = "Tap to allow the microphone in Kyllene.")
+            listening.value = Listening(error = NEEDS_MICROPHONE)
             return
         }
         // Nothing of the last reply may play while the microphone is open.
         app.link.quiet()
-        listening.value = Listening(recording = true)
+        // The microphone opens only once the phone answers, so the panel doesn't say it hears before it does.
+        listening.value = Listening(waiting = true)
         recording = work.launch {
             // As the talk screen does: the phone's profile first, and the ask only goes to the chat it was made in.
             if (!app.link.synchronizeProfile()) {
                 listening.value = Listening(error = WatchLink.NO_HERALD)
                 return@launch
             }
-            val generation = app.link.profileReset.value
-            val audio = try {
-                recorder.record { level -> listening.value = listening.value.copy(level = level) }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                listening.value = Listening(error = e.message ?: "Couldn't use the microphone.")
-                return@launch
-            } finally {
-                if (listening.value.recording) listening.value = Listening()
-            }
-            if (audio == null) {
-                listening.value = Listening(error = "I didn't hear anything.")
-            } else if (generation != app.link.profileReset.value) {
-                listening.value = Listening(error = "Phone profile changed. Please try again.")
-            } else {
+            recordAsk(listening, app.link.profileReset.value, { app.link.profileReset.value }, recorder::record) { audio ->
+                showsLast.value = true
                 app.link.ask(null, audio, WatchRecorder.MIME_TYPE)
             }
         }
@@ -158,13 +175,18 @@ class HeraldWearAssistSession(context: Context) :
     private fun stopRecording() {
         recording?.cancel()
         recording = null
-        if (listening.value.recording) listening.value = Listening()
+        if (listening.value.recording || listening.value.waiting) listening.value = Listening()
     }
 
-    /** The place where the microphone is allowed, and where the chat and its reply are. */
-    private fun openHerald() {
-        // In the assistant's own task, as Android intends for it, so the watch's Recents stays honest.
-        startAssistantActivity(Intent(context, MainActivity::class.java))
+    /** Android's prompt can't show over the assistant's window, so the session steps aside; it comes back once allowed. */
+    private fun askForMicrophone() {
+        listening.value = Listening()
+        // In the assistant's own task, as Android intends for it.
+        startAssistantActivity(Intent(context, MicrophonePermissionActivity::class.java))
         hide()
+    }
+
+    private companion object {
+        const val NEEDS_MICROPHONE = "Tap to allow the microphone."
     }
 }
