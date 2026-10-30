@@ -158,7 +158,10 @@ class HeraldWearAssistSession(context: Context) :
         app.link.quiet()
         // The microphone opens only once the phone answers, so the panel doesn't say it hears before it does.
         listening.value = Listening(waiting = true)
+        // A recording just cancelled may still be letting go of the microphone; its end must not reset this one.
+        val previous = recording
         recording = work.launch {
+            previous?.join()
             // As the talk screen does: the phone's profile first, and the ask only goes to the chat it was made in.
             if (!app.link.synchronizeProfile()) {
                 listening.value = Listening(error = WatchLink.NO_HERALD)

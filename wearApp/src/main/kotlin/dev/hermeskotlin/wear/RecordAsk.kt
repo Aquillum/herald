@@ -2,6 +2,7 @@ package dev.hermeskotlin.wear
 
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.update
 
 internal const val PROFILE_CHANGED = "Phone profile changed. Please try again."
 internal const val NOTHING_HEARD = "I didn't hear anything."
@@ -20,7 +21,8 @@ internal suspend fun recordAsk(
 ) {
     listening.value = Listening(recording = true)
     val audio = try {
-        record { level -> listening.value = listening.value.copy(level = level) }
+        // Levels arrive on the recorder's thread: never over a state the main thread has moved on to.
+        record { level -> listening.update { if (it.recording) it.copy(level = level) else it } }
     } catch (e: CancellationException) {
         // Left the screen: nothing to tell.
         throw e

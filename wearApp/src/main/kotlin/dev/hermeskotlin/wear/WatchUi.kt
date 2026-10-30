@@ -752,7 +752,7 @@ fun AssistPanel(
             HeraldOrb(
                 mood = mood,
                 level = listening.level,
-                context = chat.contextPercent?.let { it / 100f },
+                context = chat.contextPercent?.takeIf { showsLast }?.let { it / 100f },
                 modifier = Modifier
                     .size(84.dp)
                     .clip(CircleShape)
@@ -829,7 +829,7 @@ private fun SettingsScreen(link: WatchLink, store: WatchStore) {
                             Text(
                                 when {
                                     isAssistant -> "Kyllene answers the button"
-                                    refused -> "This watch won't allow it"
+                                    refused -> "Not set. Tap to try again"
                                     else -> "Set Kyllene as assistant"
                                 },
                                 style = geist(12, color = Text2),

@@ -33,6 +33,17 @@ class RecordAskTest {
     }
 
     @Test
+    fun aLateLevelDoesNotBringTheRecordingBack() {
+        run(generation = 1, current = 2) { onLevel ->
+            // The main thread moved on (a profile change) while the recorder still reports a level.
+            listening.value = Listening(error = PROFILE_CHANGED)
+            onLevel(0.5f)
+            byteArrayOf(1)
+        }
+        assertEquals(Listening(error = PROFILE_CHANGED), listening.value)
+    }
+
+    @Test
     fun silenceIsSaidAndNotSent() {
         run { null }
         assertEquals(NOTHING_HEARD, listening.value.error)
