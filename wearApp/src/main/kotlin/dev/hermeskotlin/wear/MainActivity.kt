@@ -23,8 +23,16 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 
-/** This app's own recording, on a watch without an input screen: [level] while it hears, [error] when it missed. */
-data class Listening(val recording: Boolean = false, val level: Float = 0f, val error: String? = null)
+/**
+ * This app's own recording, on a watch without an input screen: [level] while it hears, [error] when it missed.
+ * [waiting] while it checks with the phone first, before the microphone opens.
+ */
+data class Listening(
+    val recording: Boolean = false,
+    val level: Float = 0f,
+    val error: String? = null,
+    val waiting: Boolean = false,
+)
 
 /**
  * The talk screen. A tap on the mic opens the watch's own speech recognizer, so only words go to the phone;
@@ -202,8 +210,9 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun talk() {
-        // A second call-up while the microphone is already open (the assistant button pressed twice) changes nothing.
-        if (listening.value.recording) return
+        // A second call-up while Herald already hears (the assistant button pressed twice) changes nothing: its own
+        // recording, the watch's recognizer, or a live call.
+        if (recordingJob?.isActive == true || recognitionGeneration != null || app.link.call.value?.active == true) return
         defaultCallJob?.cancel()
         permissionDefault = null
         callPermissionPending = false
@@ -234,7 +243,7 @@ class MainActivity : ComponentActivity() {
         lifecycleScope.launch {
             if (!ready()) return@launch
             if (generation == null || generation != app.link.profileReset.value) {
-                listening.value = Listening(error = "Phone profile changed. Please try again.")
+                listening.value = Listening(error = PROFILE_CHANGED)
             } else action()
         }
     }
@@ -253,6 +262,7 @@ class MainActivity : ComponentActivity() {
                 return
             } catch (_: ActivityNotFoundException) {
                 // Listed but gone: record instead.
+                recognitionGeneration = null
             }
         }
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
@@ -268,22 +278,7 @@ class MainActivity : ComponentActivity() {
         val generation = app.link.profileReset.value
         listening.value = Listening(recording = true)
         recordingJob = lifecycleScope.launch {
-            val audio = try {
-                recorder.record { level -> listening.value = listening.value.copy(level = level) }
-            } catch (e: CancellationException) {
-                // Left the screen: nothing to tell.
-                throw e
-            } catch (e: Exception) {
-                listening.value = Listening(error = e.message ?: "Couldn't use the microphone.")
-                return@launch
-            } finally {
-                if (listening.value.recording) listening.value = Listening()
-            }
-            if (generation != app.link.profileReset.value) {
-                listening.value = Listening(error = "Phone profile changed. Please try again.")
-            } else if (audio == null) {
-                listening.value = Listening(error = "I didn't hear anything.")
-            } else {
+            recordAsk(listening, generation, { app.link.profileReset.value }, recorder::record) { audio ->
                 app.link.ask(null, audio, WatchRecorder.MIME_TYPE)
             }
         }
