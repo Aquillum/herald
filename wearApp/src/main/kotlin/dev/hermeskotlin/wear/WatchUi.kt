@@ -793,15 +793,18 @@ private fun SettingsScreen(link: WatchLink, store: WatchStore) {
     val roles = remember(context) { context.getSystemService(RoleManager::class.java) }
     val canBeAssistant = remember(roles) { roles?.isRoleAvailable(RoleManager.ROLE_ASSISTANT) == true }
     var isAssistant by remember { mutableStateOf(roles?.isRoleHeld(RoleManager.ROLE_ASSISTANT) == true) }
-    val askAssistant = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
-        isAssistant = roles?.isRoleHeld(RoleManager.ROLE_ASSISTANT) == true
-    }
     // Wear's own "Digital assistant app" screen is where the role is picked there: some builds refuse the
     // role request itself ("Role is not requestable"). The system picker stays the fallback for the ones that
     // have no such screen.
     val assistantRequest = remember(context, roles) {
         Intent(Settings.ACTION_VOICE_INPUT_SETTINGS).takeIf { context.packageManager.resolveActivity(it, 0) != null }
             ?: roles?.createRequestRoleIntent(RoleManager.ROLE_ASSISTANT)
+    }
+    // The picker closing with nothing picked is that refusal, so the row says so instead of doing nothing again.
+    var refused by remember { mutableStateOf(false) }
+    val askAssistant = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        isAssistant = roles?.isRoleHeld(RoleManager.ROLE_ASSISTANT) == true
+        refused = !isAssistant && assistantRequest?.action != Settings.ACTION_VOICE_INPUT_SETTINGS
     }
     val listState = rememberTransformingLazyColumnState()
     ScreenScaffold(scrollState = listState, modifier = Modifier.halo(OrbMood.Idle, MaterialTheme.colorScheme.primaryContainer)) { contentPadding ->
@@ -815,16 +818,20 @@ private fun SettingsScreen(link: WatchLink, store: WatchStore) {
             }
             item { VoiceSwitch("Read aloud", "Every reply", speak, store::setSpeak) }
             // Not a switch: the system's picker decides it, and it can be taken away there too.
-            if (canBeAssistant) {
+            if (canBeAssistant && assistantRequest != null) {
                 item {
                     Button(
-                        onClick = { assistantRequest?.let(askAssistant::launch) },
+                        onClick = { askAssistant.launch(assistantRequest) },
                         modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = Surface2, contentColor = Text1, secondaryContentColor = Muted),
                         label = { Text("Assistant", style = geist(14, FontWeight.Medium), maxLines = 1, overflow = TextOverflow.Ellipsis) },
                         secondaryLabel = {
                             Text(
-                                if (isAssistant) "Kyllene answers the button" else "Set Kyllene as assistant",
+                                when {
+                                    isAssistant -> "Kyllene answers the button"
+                                    refused -> "This watch won't allow it"
+                                    else -> "Set Kyllene as assistant"
+                                },
                                 style = geist(12, color = Text2),
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
