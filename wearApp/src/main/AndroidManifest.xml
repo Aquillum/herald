@@ -165,7 +165,8 @@
             android:excludeFromRecents="true"
             android:exported="false"
             android:taskAffinity=""
-            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+            android:theme="@android:style/Theme.Translucent.NoTitleBar"
+            tools:ignore="WearRecents" />
 
         <!-- Android only accepts an assistant that names a recognizer of its own; this one turns other apps away. -->
         <service
